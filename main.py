@@ -12,6 +12,7 @@ from modules import netinfo
 from modules import constants as C
 from modules.layout import draw_layout
 from modules.constants import FONT
+from modules.textutil import wrap_text
 from utils.timestamp import get_now
 
 # Choose which EPD to use (mock or hardware)
@@ -20,10 +21,7 @@ if os.getenv("USE_MOCK", "1") == "1":
 else:
     from epd.mock_epd2in13_V4 import EPD
 
-# Display dimensions (from the driver)
-EPD_WIDTH = 122
-EPD_HEIGHT = 250
-
+# Load sprite frames used for animations
 sprites = load_sprites("Neko.png")
 
 
@@ -31,7 +29,8 @@ sprites = load_sprites("Neko.png")
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 
 def render_frame(lines, blink=False, center=False):
-    image = Image.new('1', (122, 250), 255)
+    """Render a list of text lines to an image for the eInk display."""
+    image = Image.new('1', (C.DISPLAY_WIDTH, C.DISPLAY_HEIGHT), 255)
     draw = ImageDraw.Draw(image)
     y_offset = 5
     line_height = 14
@@ -47,24 +46,6 @@ def render_frame(lines, blink=False, center=False):
         draw.rectangle((110, 235, 115, 240), fill=0)
 
     return image
-
-def wrap_text(draw, text, max_width, font):
-    lines = []
-    words = text.split()
-    line = ""
-
-    for word in words:
-        test_line = line + word + " "
-        width = font.getlength(test_line)
-        if width <= max_width:
-            line = test_line
-        else:
-            lines.append(line.strip())
-            line = word + " "
-    if line:
-        lines.append(line.strip())
-
-    return lines
 
 
 
@@ -84,6 +65,8 @@ def boot_sequence(epd):
         time.sleep(1)
 
 def safe_icon(emoji, fallback):
+    """Return ``emoji`` if printable, otherwise ``fallback``."""
+
     try:
         emoji.encode('utf-8')
         return emoji
