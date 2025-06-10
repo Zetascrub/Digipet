@@ -42,3 +42,45 @@ def get_all_interfaces_with_ips():
         return interfaces_with_ips
     except subprocess.CalledProcessError:
         return [("error", "Could not list interfaces")]
+
+
+def discover_local_devices():
+    """
+    Parse the kernel's ARP table to quickly list local IP↔MAC entries.
+    No root required, instantaneous.
+    """
+    devices = []
+    try:
+        output = subprocess.check_output(["ip", "neigh"], text=True)
+        for line in output.splitlines():
+            parts = line.split()
+            # e.g. "192.168.8.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE"
+            if len(parts) >= 6 and parts[2] == "dev" and "lladdr" in parts:
+                ip      = parts[0]
+                iface   = parts[3]
+                mac     = parts[parts.index("lladdr") + 1]
+                devices.append({"iface": iface, "ip": ip, "mac": mac})
+    except subprocess.CalledProcessError:
+        # if something goes wrong, just return what we have
+        pass
+
+    return devices
+
+
+def get_ping_latency(host):
+     """
+     Ping once (-c1) with 1s timeout, return round-trip time string or 'timeout'.
+     """
+     try:
+         out = subprocess.check_output(
+             ["ping", "-c", "1", "-W", "1", host],
+             stderr=subprocess.DEVNULL,
+             text=True
+         )
+         for line in out.splitlines():
+             if "time=" in line:
+                 # e.g. "64 bytes from 192.168.8.1: icmp_seq=1 ttl=64 time=2.34 ms"
+                 return line.split("time=")[1].split()[0] + "ms"
+     except subprocess.CalledProcessError:
+         pass
+     return "timeout"
