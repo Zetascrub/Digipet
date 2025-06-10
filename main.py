@@ -105,6 +105,15 @@ def idle_loop(epd):
             gw         = netinfo.get_gateway()
             hostname   = netinfo.get_hostname()
 
+            # Stats row showing interface IPs and gateway
+            for iface, ip in interfaces:
+                if iface == "lo":
+                    continue
+                stats.append((iface, ip))
+                if len(stats) == 2:
+                    break
+            stats.append(("GW", gw))
+
             # Header
             dialog = [f"{C.DEVICE_NAME} Idle"]
 
