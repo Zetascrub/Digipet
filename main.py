@@ -2,6 +2,7 @@ import os
 import time
 import datetime
 import random
+import psutil
 from PIL import Image, ImageDraw
 from modules.sprites import load_sprites
 
@@ -13,7 +14,9 @@ from modules import constants as C
 from modules.layout import draw_layout
 from modules.constants import FONT
 from modules.textutil import wrap_text
+from modules.netinfo import discover_local_devices, get_ping_latency
 from utils.timestamp import get_now
+
 
 # Choose which EPD to use (mock or hardware)
 if os.getenv("USE_MOCK", "1") == "1":
@@ -27,6 +30,11 @@ sprites = load_sprites("Neko.png")
 
 # Font path (adjust if needed)
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+
+start_time = time.time()
+prev_net_io = psutil.net_io_counters(pernic=True)
+
+
 
 def render_frame(lines, blink=False, center=False):
     """Render a list of text lines to an image for the eInk display."""
@@ -74,6 +82,9 @@ def safe_icon(emoji, fallback):
         return fallback
 
 def idle_loop(epd):
+    import time, datetime, socket, psutil
+    global prev_net_io, start_time
+
     blink = False
     cycle = 0
 
@@ -83,24 +94,59 @@ def idle_loop(epd):
         dialog = []
         stats = []
 
+        # sprite animation frame
         sprite_index = cycle % len(sprites)
         sprite = sprites[sprite_index]
 
-
         if mode == 0:
+            # ——— Network / Passive Recon Screen ———
             print("Entering network loop...")
             interfaces = netinfo.get_all_interfaces_with_ips()
-            gw = netinfo.get_gateway()
-            hostname = netinfo.get_hostname()
+            gw         = netinfo.get_gateway()
+            hostname   = netinfo.get_hostname()
 
+            # Header
             dialog = [f"{C.DEVICE_NAME} Idle"]
 
+            # Interface IPs
             for iface, ip in interfaces:
                 if iface != "lo":
                     dialog.append(f"{iface}: {ip}")
 
+            # ARP‐table neighbours
+            devices = netinfo.discover_local_devices()
+            for dev in devices[:3]:
+                try:
+                    name = socket.gethostbyaddr(dev['ip'])[0]
+                except Exception:
+                    name = None
+                entry = f"{dev['iface']} {dev['ip']}"
+                if name:
+                    entry += f" ({name})"
+                entry += f" – {dev['mac']}"
+                dialog.append(entry)
+            total = len(devices)
+            if total > 3:
+                dialog.append(f"...and {total - 3} more")
 
-            dialog.extend([
+            # Gateway ping
+            ping = netinfo.get_ping_latency(gw)
+            dialog.append(f"Ping GW: {ping}")
+
+            # Uptime
+            uptime = int(time.time() - start_time)
+            dialog.append(f"Uptime: {str(datetime.timedelta(seconds=uptime))}")
+
+            # Paginate long lists
+            lines_per_page = 8
+            pages = (len(dialog) + lines_per_page - 1) // lines_per_page
+            page  = (cycle // 3) % pages
+            display_dialog = dialog[page*lines_per_page : (page+1)*lines_per_page]
+            if pages > 1:
+                display_dialog.append(f"[{page+1}/{pages}]")
+
+            # Footer / status bar
+            display_dialog.extend([
                 f"GW: {gw}",
                 f"Host: {hostname}",
                 "",
@@ -109,21 +155,52 @@ def idle_loop(epd):
                 f"{C.DOT if blink else '     '}"
             ])
 
+            dialog = display_dialog
 
         elif mode == 1:
+            # ——— System Stats & Throughput Screen ———
             print("Entering stats loop...")
-            stats = [(safe_icon("📶", "SIG"), 5), (safe_icon("🧠", "CPU"), 3), (safe_icon("🔒", "SEC"), 2)]
+            # CPU & RAM %
+            cpu = int(psutil.cpu_percent(interval=None))
+            ram = int(psutil.virtual_memory().percent)
+
+            # Network throughput since last cycle
+            cur_io = psutil.net_io_counters(pernic=True)
+            up_total = down_total = 0
+            for ifc, stats_cur in cur_io.items():
+                if ifc == "lo":
+                    continue
+                prev = prev_net_io.get(ifc)
+                if prev:
+                    up_total   += stats_cur.bytes_sent - prev.bytes_sent
+                    down_total += stats_cur.bytes_recv - prev.bytes_recv
+            prev_net_io = cur_io
+
+            up_rate   = up_total   // C.DISPLAY_CYCLE_TIME // 1024
+            down_rate = down_total // C.DISPLAY_CYCLE_TIME // 1024
+
+            stats = [
+                (safe_icon("🧠", "CPU"), cpu),
+                (safe_icon("💾", "RAM"), ram),
+                (safe_icon("⬇️", "DN"), down_rate),
+                (safe_icon("⬆️", "UP"), up_rate),
+            ]
             dialog = [
-                "New device detected",
-                "IP: 192.168.8.140",
-                "Host: iPhone"
+                "Throughput KB/s",
+                f"↓ {down_rate}",
+                f"↑ {up_rate}"
             ]
 
-        # 🧠 Moved here so sprite always gets used
+        # mode == 2 will simply redisplay the last dialog/stats with sprite animation
+
+        # Render and display
         frame = draw_layout(dialog, stats=stats, blink=blink, sprite_frame=sprite)
         epd.display(epd.getbuffer(frame))
+
         cycle += 1
         time.sleep(C.DISPLAY_CYCLE_TIME)
+
+
 
 
 
