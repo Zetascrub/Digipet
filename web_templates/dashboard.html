@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digipet Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e27;
+            color: #00ff41;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #00ff41;
+            background: #0f1629;
+            position: relative;
+        }
+
+        .logout-btn, .config-btn {
+            position: absolute;
+            top: 20px;
+            background: #ff4141;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .logout-btn {
+            right: 20px;
+        }
+
+        .config-btn {
+            right: 120px;
+            background: #00ff41;
+            color: #0a0e27;
+        }
+
+        .logout-btn:hover {
+            background: #cc3333;
+        }
+
+        .config-btn:hover {
+            background: #00cc33;
+        }
+
+        h1 {
+            font-size: 2em;
+            text-shadow: 0 0 10px #00ff41;
+        }
+
+        .subtitle {
+            color: #7d8590;
+            margin-top: 10px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #0f1629;
+            border: 1px solid #00ff41;
+            padding: 20px;
+            border-radius: 5px;
+        }
+
+        .card h2 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #00ff41;
+            border-bottom: 1px solid #00ff4144;
+            padding-bottom: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px;
+            background: #0a0e2744;
+        }
+
+        .stat-label {
+            color: #7d8590;
+        }
+
+        .stat-value {
+            color: #00ff41;
+            font-weight: bold;
+        }
+
+        .evolution-display {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .evolution-sprite {
+            width: 128px;
+            height: 128px;
+            margin: 0 auto 15px;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            filter: drop-shadow(0 0 10px #00ff41);
+        }
+
+        .evolution-name {
+            font-size: 2em;
+            color: #00ff41;
+            text-shadow: 0 0 10px #00ff41;
+            margin: 10px 0;
+        }
+
+        .evolution-level {
+            color: #7d8590;
+        }
+
+        .xp-bar {
+            width: 100%;
+            height: 25px;
+            background: #0a0e27;
+            border: 1px solid #00ff41;
+            margin: 15px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .xp-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff41, #00cc33);
+            transition: width 0.5s ease;
+        }
+
+        .xp-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            text-shadow: 0 0 5px #000;
+            font-weight: bold;
+        }
+
+        .button {
+            background: #00ff41;
+            color: #0a0e27;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .button:hover {
+            background: #00cc33;
+            box-shadow: 0 0 10px #00ff41;
+        }
+
+        .button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        .button.danger {
+            background: #ff4141;
+        }
+
+        .button.danger:hover {
+            background: #cc3333;
+            box-shadow: 0 0 10px #ff4141;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-running {
+            background: #00ff41;
+            box-shadow: 0 0 5px #00ff41;
+        }
+
+        .status-stopped {
+            background: #ff4141;
+        }
+
+        .status-paused {
+            background: #ffaa00;
+        }
+
+        .activity-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #0a0e27;
+            padding: 10px;
+            border: 1px solid #00ff4144;
+        }
+
+        .activity-item {
+            padding: 5px 0;
+            border-bottom: 1px solid #00ff4122;
+            font-size: 0.9em;
+        }
+
+        .activity-timestamp {
+            color: #7d8590;
+            font-size: 0.8em;
+        }
+
+        .vuln-critical {
+            color: #ff4141;
+            font-weight: bold;
+        }
+
+        .vuln-high {
+            color: #ff9900;
+            font-weight: bold;
+        }
+
+        .vuln-medium {
+            color: #ffcc00;
+        }
+
+        .vuln-low {
+            color: #7d8590;
+        }
+
+        select {
+            background: #0a0e27;
+            color: #00ff41;
+            border: 1px solid #00ff41;
+            padding: 8px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .controls {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #00ff4122;
+        }
+
+        th {
+            color: #00ff41;
+            border-bottom: 2px solid #00ff41;
+        }
+
+        .error {
+            color: #ff4141;
+        }
+
+        .warning-banner {
+            background: #ff9900;
+            color: #0a0e27;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: none;
+            border-left: 5px solid #ff6600;
+        }
+
+        .warning-banner.show {
+            display: block;
+        }
+
+        .info-banner {
+            background: #0066cc;
+            color: #fff;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            display: none;
+            border-left: 5px solid #0044aa;
+        }
+
+        .info-banner.show {
+            display: block;
+        }
+
+        .state-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .state-idle {
+            background: #666;
+            color: #fff;
+        }
+
+        .state-reconnaissance {
+            background: #0066cc;
+            color: #fff;
+        }
+
+        .state-scanning {
+            background: #ff9900;
+            color: #0a0e27;
+        }
+
+        .state-harvesting {
+            background: #9933ff;
+            color: #fff;
+        }
+
+        .state-analysis {
+            background: #00cc66;
+            color: #0a0e27;
+        }
+
+        .network-info {
+            font-size: 0.9em;
+            color: #7d8590;
+            margin-top: 5px;
+        }
+
+        .progress-pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .progress-container {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #00ff4122;
+        }
+
+        .progress-bar-container {
+            background: #0a0e27;
+            border: 1px solid #00ff41;
+            border-radius: 4px;
+            height: 30px;
+            position: relative;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #00ff41 0%, #00cc33 100%);
+            height: 100%;
+            width: 0%;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            font-weight: bold;
+            color: #0a0e27;
+        }
+
+        .progress-details {
+            font-size: 0.9em;
+            color: #7d8590;
+            margin-top: 5px;
+        }
+
+        .progress-stage {
+            color: #00ff41;
+            font-weight: bold;
+        }
+
+        .progress-container.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <a href="/config" class="config-btn">⚙️ Config</a>
+            <button id="logout-btn" class="logout-btn" onclick="logout()" style="display:none;">Logout</button>
+            <h1>🦖 DIGIPET CONTROL PANEL 🦖</h1>
+            <p class="subtitle">Autonomous Penetration Testing Platform</p>
+        </header>
+
+        <!-- Warning Banner -->
+        <div id="warning-banner" class="warning-banner">
+            <strong>⚠️ Warning:</strong> <span id="warning-text"></span>
+        </div>
+
+        <!-- Info Banner -->
+        <div id="info-banner" class="info-banner">
+            <strong>ℹ️ Info:</strong> <span id="info-text"></span>
+        </div>
+
+        <div class="grid">
+            <!-- Evolution Status -->
+            <div class="card">
+                <h2>Evolution Status</h2>
+                <div class="evolution-display">
+                    <img id="evolution-sprite" class="evolution-sprite" src="" alt="Digipet" style="display:none;">
+                    <div class="evolution-level" id="evolution-level">Level ?</div>
+                    <div class="evolution-name" id="evolution-name">Loading...</div>
+                    <div class="xp-bar">
+                        <div class="xp-fill" id="xp-fill" style="width: 0%"></div>
+                        <div class="xp-text" id="xp-text">0 XP</div>
+                    </div>
+                    <div id="evolution-description" class="stat-label"></div>
+                </div>
+            </div>
+
+            <!-- Orchestrator Status -->
+            <div class="card">
+                <h2>Orchestrator Status</h2>
+                <div class="stat-row">
+                    <span class="stat-label">Status:</span>
+                    <span class="stat-value" id="orch-status">
+                        <span class="status-indicator status-stopped"></span>Stopped
+                    </span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Current State:</span>
+                    <span class="stat-value" id="orch-state-display">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Target Network:</span>
+                    <span class="stat-value" id="orch-network">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Profile:</span>
+                    <span class="stat-value" id="orch-profile">-</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Actions Performed:</span>
+                    <span class="stat-value" id="orch-actions">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Last Action:</span>
+                    <span class="stat-value" id="orch-last-action">Never</span>
+                </div>
+
+                <!-- Real-time Progress Tracking -->
+                <div id="progress-container" class="progress-container hidden">
+                    <div class="stat-row">
+                        <span class="stat-label">Current Stage:</span>
+                        <span class="stat-value progress-stage" id="progress-stage">-</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" id="progress-bar-fill">
+                            <span id="progress-percent">0%</span>
+                        </div>
+                    </div>
+                    <div class="progress-details">
+                        <span id="progress-status">Idle</span>
+                    </div>
+                    <div class="progress-details" id="progress-host-info" style="display:none;">
+                        <span id="progress-host-text"></span>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="button" id="btn-start" onclick="orchestratorStart()">▶️ Start</button>
+                    <button class="button" id="btn-pause" onclick="orchestratorPause()" disabled>⏸️ Pause</button>
+                    <button class="button danger" id="btn-stop" onclick="orchestratorStop()" disabled>⏹️ Stop</button>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="card">
+                <h2>Discovery Statistics</h2>
+                <div class="stat-row">
+                    <span class="stat-label">Hosts Discovered:</span>
+                    <span class="stat-value" id="stat-hosts">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Services Enumerated:</span>
+                    <span class="stat-value" id="stat-services">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Credentials Captured:</span>
+                    <span class="stat-value" id="stat-creds">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Vulnerabilities Found:</span>
+                    <span class="stat-value" id="stat-vulns">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Critical Vulns:</span>
+                    <span class="stat-value vuln-critical" id="stat-vulns-critical">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- Configuration -->
+            <div class="card">
+                <h2>Configuration</h2>
+                <div class="stat-row">
+                    <span class="stat-label">Stealth Profile:</span>
+                    <select id="profile-select" onchange="changeProfile()">
+                        <option value="aggressive">Aggressive</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="stealth">Stealth</option>
+                        <option value="passive">Passive</option>
+                    </select>
+                </div>
+                <div class="controls">
+                    <button class="button" onclick="runRecon()">Run Recon</button>
+                    <button class="button" onclick="runScan()">Scan Vulns</button>
+                </div>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="card" style="grid-column: span 2;">
+                <h2>Recent Activity</h2>
+                <div class="activity-log" id="activity-log">
+                    <div class="activity-item">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hosts Table -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2>Discovered Hosts</h2>
+                <div>
+                    <a href="/api/export/hosts/csv" class="button" style="text-decoration: none; display: inline-block; margin: 0 5px;">📊 Export CSV</a>
+                    <a href="/api/export/json" class="button" style="text-decoration: none; display: inline-block; margin: 0 5px;">📦 Export JSON</a>
+                </div>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <input type="text" id="host-search" placeholder="🔍 Search by IP or hostname..."
+                       style="width: 100%; padding: 8px; background: #0a0e27; border: 1px solid #00ff41; color: #00ff41; font-family: 'Courier New', monospace;"
+                       onkeyup="filterHosts()">
+            </div>
+            <div id="hosts-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>Hostname</th>
+                            <th>MAC Address</th>
+                            <th>First Seen</th>
+                            <th>Services</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hosts-tbody">
+                        <tr><td colspan="5">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global data storage for filtering
+        let allHosts = [];
+
+        // Logout function
+        function logout() {
+            sessionStorage.removeItem('authCredentials');
+            window.location.href = '/login';
+        }
+
+        // Filter hosts by search term
+        function filterHosts() {
+            const searchTerm = document.getElementById('host-search').value.toLowerCase();
+            const filteredHosts = allHosts.filter(host => {
+                const ip = host.ip_address.toLowerCase();
+                const hostname = (host.hostname || '').toLowerCase();
+                const mac = (host.mac_address || '').toLowerCase();
+                return ip.includes(searchTerm) || hostname.includes(searchTerm) || mac.includes(searchTerm);
+            });
+            renderHostsTable(filteredHosts);
+        }
+
+        // Check authentication on page load
+        window.addEventListener('load', async () => {
+            // First check if auth is even required by trying /api/status without credentials
+            try {
+                const testResponse = await fetch('/api/status');
+
+                if (testResponse.status === 401) {
+                    // Auth is required
+                    const credentials = sessionStorage.getItem('authCredentials');
+
+                    if (!credentials) {
+                        // No credentials stored, redirect to login
+                        window.location.href = '/login';
+                        return;
+                    }
+
+                    // Show logout button
+                    document.getElementById('logout-btn').style.display = 'block';
+
+                    // Test if stored credentials are still valid
+                    const authResponse = await fetch('/api/status', {
+                        headers: {'Authorization': 'Basic ' + credentials}
+                    });
+
+                    if (!authResponse.ok) {
+                        // Credentials expired or invalid
+                        sessionStorage.removeItem('authCredentials');
+                        window.location.href = '/login';
+                    }
+                } else if (testResponse.ok) {
+                    // Auth is not required, just proceed normally
+                    // No logout button needed
+                }
+            } catch (error) {
+                console.error('Auth check failed:', error);
+            }
+        });
+
+        // API functions
+        async function fetchAPI(endpoint) {
+            const credentials = sessionStorage.getItem('authCredentials');
+            const headers = credentials ? {'Authorization': 'Basic ' + credentials} : {};
+
+            const response = await fetch(`/api/${endpoint}`, {headers});
+
+            // Check for authentication error
+            if (response.status === 401) {
+                sessionStorage.removeItem('authCredentials');
+                window.location.href = '/login';
+                throw new Error('Authentication required');
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.json();
+        }
+
+        async function postAPI(endpoint, data = {}) {
+            const credentials = sessionStorage.getItem('authCredentials');
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            if (credentials) {
+                headers['Authorization'] = 'Basic ' + credentials;
+            }
+
+            const response = await fetch(`/api/${endpoint}`, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+
+            // Check for authentication error
+            if (response.status === 401) {
+                sessionStorage.removeItem('authCredentials');
+                window.location.href = '/login';
+                throw new Error('Authentication required');
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.json();
+        }
+
+        // Update functions
+        async function updateSprite() {
+            try {
+                const spriteData = await fetchAPI('sprite');
+                const spriteImg = document.getElementById('evolution-sprite');
+                spriteImg.src = spriteData.sprite_data;
+                spriteImg.style.display = 'block';
+            } catch (error) {
+                console.error('Error loading sprite:', error);
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const status = await fetchAPI('status');
+
+                // Update evolution
+                const evo = status.evolution.current_stage;
+                document.getElementById('evolution-name').textContent = evo.name;
+                document.getElementById('evolution-level').textContent = `Level ${evo.level}`;
+                document.getElementById('evolution-description').textContent = evo.description;
+
+                const progress = status.evolution.progress;
+                if (!progress.is_max_level) {
+                    const percent = progress.progress_percent;
+                    document.getElementById('xp-fill').style.width = percent + '%';
+                    document.getElementById('xp-text').textContent = `${percent}% to ${progress.next_stage_name}`;
+                } else {
+                    document.getElementById('xp-fill').style.width = '100%';
+                    document.getElementById('xp-text').textContent = 'MAX LEVEL';
+                }
+
+                // Update orchestrator
+                const orch = status.orchestrator;
+                let statusText = orch.paused ? 'Paused' : (orch.running ? 'Running' : 'Stopped');
+                let statusClass = orch.paused ? 'status-paused' : (orch.running ? 'status-running' : 'status-stopped');
+
+                document.getElementById('orch-status').innerHTML = `<span class="status-indicator ${statusClass}"></span>${statusText}`;
+
+                // Show current state with badge
+                const currentState = orch.current_state || 'idle';
+                const stateBadgeClass = 'state-' + currentState.replace('_', '-');
+                const stateDisplay = orch.running ? `<span class="state-badge ${stateBadgeClass}">${currentState}</span>` : '-';
+                document.getElementById('orch-state-display').innerHTML = stateDisplay;
+
+                // Show target network
+                const targetNetwork = status.config.attack_config?.target_network || 'auto';
+                document.getElementById('orch-network').textContent = targetNetwork;
+
+                document.getElementById('orch-profile').textContent = orch.current_profile || '-';
+                document.getElementById('orch-actions').textContent = orch.actions_performed || 0;
+
+                // Show last action time
+                if (orch.last_action) {
+                    const lastActionTime = new Date(orch.last_action).toLocaleTimeString();
+                    document.getElementById('orch-last-action').textContent = lastActionTime;
+                } else {
+                    document.getElementById('orch-last-action').textContent = 'Never';
+                }
+
+                // Check network configuration
+                checkNetworkConfig(targetNetwork, orch.running);
+
+                // Show info banner if orchestrator is running
+                if (orch.running) {
+                    showInfoBanner(`Digipet is actively scanning ${targetNetwork} in ${currentState} state`);
+                } else {
+                    hideInfoBanner();
+                }
+
+                // Update buttons
+                document.getElementById('btn-start').disabled = orch.running;
+                document.getElementById('btn-pause').disabled = !orch.running || orch.paused;
+                document.getElementById('btn-stop').disabled = !orch.running;
+
+                // Update stats
+                document.getElementById('stat-hosts').textContent = status.stats.total_hosts || 0;
+                document.getElementById('stat-services').textContent = status.stats.total_services || 0;
+                document.getElementById('stat-creds').textContent = status.stats.total_credentials || 0;
+                document.getElementById('stat-vulns').textContent = status.stats.total_vulnerabilities || 0;
+
+                const criticalVulns = status.stats.vulnerabilities_by_severity?.CRITICAL || 0;
+                document.getElementById('stat-vulns-critical').textContent = criticalVulns;
+
+                // Update profile select
+                document.getElementById('profile-select').value = status.config.current_profile;
+
+                // Update scan progress if orchestrator is running
+                if (orch.running) {
+                    updateScanProgress();
+                }
+
+            } catch (error) {
+                console.error('Error updating status:', error);
+            }
+        }
+
+        async function updateScanProgress() {
+            try {
+                const progress = await fetchAPI('orchestrator/progress');
+                const container = document.getElementById('progress-container');
+
+                // Show/hide progress container based on whether we have active progress
+                if (progress.stage && progress.stage !== 'Complete') {
+                    container.classList.remove('hidden');
+
+                    // Update stage name
+                    document.getElementById('progress-stage').textContent = progress.stage || 'Idle';
+
+                    // Update progress bar
+                    const percent = progress.percent_complete || 0;
+                    document.getElementById('progress-bar-fill').style.width = percent + '%';
+                    document.getElementById('progress-percent').textContent = percent + '%';
+
+                    // Update status message
+                    document.getElementById('progress-status').textContent = progress.status_message || 'Working...';
+
+                    // Update host info if available
+                    const hostInfo = document.getElementById('progress-host-info');
+                    if (progress.current_host) {
+                        hostInfo.style.display = 'block';
+                        const hostCount = `${progress.hosts_completed}/${progress.hosts_total}`;
+                        document.getElementById('progress-host-text').textContent =
+                            `Scanning ${progress.current_host} (${hostCount} hosts) • ${progress.services_found} services found`;
+                    } else if (progress.stage === 'ARP Scan' || progress.stage === 'Ping Sweep') {
+                        hostInfo.style.display = 'block';
+                        document.getElementById('progress-host-text').textContent =
+                            `Discovering hosts on network...`;
+                    } else {
+                        hostInfo.style.display = 'none';
+                    }
+                } else if (progress.stage === 'Complete') {
+                    // Show completion briefly
+                    container.classList.remove('hidden');
+                    document.getElementById('progress-stage').textContent = 'Complete';
+                    document.getElementById('progress-bar-fill').style.width = '100%';
+                    document.getElementById('progress-percent').textContent = '100%';
+                    document.getElementById('progress-status').textContent = progress.status_message || 'Scan complete';
+                    document.getElementById('progress-host-info').style.display = 'none';
+
+                    // Hide after 3 seconds
+                    setTimeout(() => {
+                        container.classList.add('hidden');
+                    }, 3000);
+                } else {
+                    container.classList.add('hidden');
+                }
+
+            } catch (error) {
+                console.error('Error updating scan progress:', error);
+            }
+        }
+
+        async function updateActivity() {
+            try {
+                const data = await fetchAPI('activity?limit=20');
+                const logDiv = document.getElementById('activity-log');
+                logDiv.innerHTML = '';
+
+                data.activities.forEach(activity => {
+                    const item = document.createElement('div');
+                    item.className = 'activity-item';
+
+                    const timestamp = new Date(activity.timestamp).toLocaleTimeString();
+                    item.innerHTML = `<span class="activity-timestamp">[${timestamp}]</span> ${activity.event_type}: ${activity.details || activity.target || ''}`;
+
+                    logDiv.appendChild(item);
+                });
+
+            } catch (error) {
+                console.error('Error updating activity:', error);
+            }
+        }
+
+        function renderHostsTable(hosts) {
+            const tbody = document.getElementById('hosts-tbody');
+            tbody.innerHTML = '';
+
+            if (hosts.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No hosts found</td></tr>';
+                return;
+            }
+
+            hosts.forEach(host => {
+                const row = document.createElement('tr');
+                const firstSeen = new Date(host.first_seen).toLocaleString();
+
+                row.innerHTML = `
+                    <td>${host.ip_address}</td>
+                    <td>${host.hostname || '-'}</td>
+                    <td>${host.mac_address || '-'}</td>
+                    <td>${firstSeen}</td>
+                    <td><button class="button" onclick="viewHost('${host.ip_address}')">View</button></td>
+                `;
+
+                tbody.appendChild(row);
+            });
+        }
+
+        async function updateHosts() {
+            try {
+                const data = await fetchAPI('hosts');
+                allHosts = data.hosts;
+                renderHostsTable(allHosts);
+            } catch (error) {
+                console.error('Error updating hosts:', error);
+            }
+        }
+
+        // Control functions
+        async function orchestratorStart() {
+            await postAPI('orchestrator/start');
+            updateStatus();
+        }
+
+        async function orchestratorPause() {
+            await postAPI('orchestrator/pause');
+            updateStatus();
+        }
+
+        async function orchestratorStop() {
+            await postAPI('orchestrator/stop');
+            updateStatus();
+        }
+
+        async function changeProfile() {
+            const profile = document.getElementById('profile-select').value;
+            await postAPI('config/profile', {profile: profile});
+            updateStatus();
+        }
+
+        async function runRecon() {
+            await postAPI('orchestrator/recon');
+            setTimeout(updateStatus, 1000);
+        }
+
+        async function runScan() {
+            await postAPI('vulnerabilities/scan');
+            setTimeout(updateStatus, 1000);
+        }
+
+        async function viewHost(ip) {
+            try {
+                const hostDetails = await fetchAPI(`hosts/${ip}`);
+                // Display in alert for now (could make a modal later)
+                let details = `Host: ${hostDetails.host.ip_address}\n`;
+                details += `Hostname: ${hostDetails.host.hostname || 'N/A'}\n`;
+                details += `MAC: ${hostDetails.host.mac_address || 'N/A'}\n\n`;
+
+                details += `Services (${hostDetails.services.length}):\n`;
+                hostDetails.services.forEach(svc => {
+                    details += `  ${svc.port}/${svc.protocol} - ${svc.service_name} ${svc.service_version || ''}\n`;
+                });
+
+                if (hostDetails.vulnerabilities.length > 0) {
+                    details += `\nVulnerabilities (${hostDetails.vulnerabilities.length}):\n`;
+                    hostDetails.vulnerabilities.forEach(vuln => {
+                        details += `  [${vuln.severity}] ${vuln.cve_id}: ${vuln.title}\n`;
+                    });
+                }
+
+                alert(details);
+            } catch (error) {
+                console.error('Error fetching host details:', error);
+                alert('Error loading host details');
+            }
+        }
+
+        // Banner helper functions
+        function showWarningBanner(message) {
+            const banner = document.getElementById('warning-banner');
+            const text = document.getElementById('warning-text');
+            text.textContent = message;
+            banner.classList.add('show');
+        }
+
+        function hideWarningBanner() {
+            const banner = document.getElementById('warning-banner');
+            banner.classList.remove('show');
+        }
+
+        function showInfoBanner(message) {
+            const banner = document.getElementById('info-banner');
+            const text = document.getElementById('info-text');
+            text.textContent = message;
+            banner.classList.add('show');
+        }
+
+        function hideInfoBanner() {
+            const banner = document.getElementById('info-banner');
+            banner.classList.remove('show');
+        }
+
+        // Network configuration checker
+        async function checkNetworkConfig(targetNetwork, isRunning) {
+            try {
+                // Fetch system network interfaces
+                const sysInfo = await fetchAPI('system/interfaces');
+
+                if (targetNetwork === 'auto') {
+                    // Auto mode - no warning needed
+                    hideWarningBanner();
+                    return;
+                }
+
+                // Check if the target network matches any local interface
+                const interfaces = sysInfo.interfaces || [];
+                let matchFound = false;
+
+                for (const iface of interfaces) {
+                    // Extract network from interface IP
+                    const ifaceIP = iface.ip;
+                    const targetParts = targetNetwork.split('/');
+                    const targetBase = targetParts[0];
+
+                    // Simple check: see if interface IP is in same subnet
+                    const ifaceParts = ifaceIP.split('.');
+                    const targetBaseParts = targetBase.split('.');
+
+                    // Check first 3 octets match
+                    if (ifaceParts[0] === targetBaseParts[0] &&
+                        ifaceParts[1] === targetBaseParts[1] &&
+                        ifaceParts[2] === targetBaseParts[2]) {
+                        matchFound = true;
+                        break;
+                    }
+                }
+
+                if (!matchFound && isRunning) {
+                    showWarningBanner(
+                        `Target network ${targetNetwork} doesn't match your local network. ` +
+                        `Make sure you're connected to the correct network or change the target in config.`
+                    );
+                } else {
+                    hideWarningBanner();
+                }
+
+            } catch (error) {
+                console.error('Error checking network config:', error);
+            }
+        }
+
+        // Auto-refresh
+        setInterval(updateStatus, 2000);
+        setInterval(updateActivity, 5000);
+        setInterval(updateHosts, 10000);
+        setInterval(updateSprite, 10000); // Update sprite every 10 seconds
+
+        // Initial load
+        updateStatus();
+        updateActivity();
+        updateHosts();
+        updateSprite();
+    </script>
+</body>
+</html>

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digipet Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1e37 100%);
+            color: #00ff41;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .login-container {
+            background: #0f1629;
+            border: 2px solid #00ff41;
+            border-radius: 10px;
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+
+        .logo {
+            text-align: center;
+            font-size: 4em;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 1.8em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px #00ff41;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #7d8590;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #00ff41;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background: #0a0e27;
+            border: 1px solid #00ff41;
+            border-radius: 5px;
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #00ff41;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #00ff41;
+            color: #0a0e27;
+            border: none;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #00cc33;
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .error {
+            background: #ff4141;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .info {
+            text-align: center;
+            margin-top: 20px;
+            color: #7d8590;
+            font-size: 0.85em;
+        }
+
+        .version {
+            text-align: center;
+            margin-top: 30px;
+            color: #3d4550;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">🦖</div>
+        <h1>DIGIPET</h1>
+        <p class="subtitle">Autonomous Pentesting Platform</p>
+
+        <div id="error" class="error"></div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    value="admin"
+                    readonly
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    placeholder="Enter your password"
+                    autocomplete="current-password"
+                    required
+                    autofocus
+                >
+            </div>
+
+            <button type="submit">LOGIN</button>
+        </form>
+
+        <div class="info">
+            Default credentials have been disabled.<br>
+            Use the password you set with --web-password
+        </div>
+
+        <div class="version">
+            Digipet v2.0
+        </div>
+    </div>
+
+    <script>
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            setTimeout(() => {
+                errorDiv.classList.remove('show');
+            }, 5000);
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            // Create Basic Auth header
+            const credentials = btoa(username + ':' + password);
+
+            try {
+                // Test the credentials
+                const response = await fetch('/api/status', {
+                    headers: {
+                        'Authorization': 'Basic ' + credentials
+                    }
+                });
+
+                if (response.ok) {
+                    // Store credentials in sessionStorage
+                    sessionStorage.setItem('authCredentials', credentials);
+
+                    // Redirect to dashboard
+                    window.location.href = '/';
+                } else if (response.status === 401) {
+                    showError('Invalid password. Please try again.');
+                    document.getElementById('password').value = '';
+                    document.getElementById('password').focus();
+                } else {
+                    showError('Login failed: ' + response.statusText);
+                }
+            } catch (error) {
+                showError('Connection error: ' + error.message);
+            }
+        }
+
+        // Check if already logged in
+        window.addEventListener('load', async () => {
+            const credentials = sessionStorage.getItem('authCredentials');
+            if (credentials) {
+                try {
+                    const response = await fetch('/api/status', {
+                        headers: {
+                            'Authorization': 'Basic ' + credentials
+                        }
+                    });
+
+                    if (response.ok) {
+                        // Already logged in, redirect
+                        window.location.href = '/';
+                    } else {
+                        // Credentials expired/invalid
+                        sessionStorage.removeItem('authCredentials');
+                    }
+                } catch (error) {
+                    console.error('Auth check failed:', error);
+                }
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digipet Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e27;
+            color: #00ff41;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #00ff41;
+            background: #0f1629;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 2em;
+            text-shadow: 0 0 10px #00ff41;
+        }
+
+        .back-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: #00ff41;
+            color: #0a0e27;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .back-btn:hover {
+            background: #00cc33;
+        }
+
+        .config-section {
+            background: #0f1629;
+            border: 1px solid #00ff41;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+
+        .config-section h2 {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            color: #00ff41;
+            border-bottom: 1px solid #00ff4144;
+            padding-bottom: 10px;
+        }
+
+        .config-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: #0a0e2744;
+        }
+
+        .config-label {
+            color: #7d8590;
+            flex: 1;
+        }
+
+        .config-value {
+            flex: 2;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 8px;
+            background: #0a0e27;
+            border: 1px solid #00ff41;
+            border-radius: 4px;
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+        }
+
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .btn {
+            background: #00ff41;
+            color: #0a0e27;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            font-weight: bold;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            background: #00cc33;
+        }
+
+        .btn-danger {
+            background: #ff4141;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #cc3333;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .help-text {
+            color: #7d8590;
+            font-size: 0.85em;
+            margin-top: 5px;
+        }
+
+        .profile-selector {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .profile-card {
+            background: #0a0e27;
+            border: 2px solid #00ff4144;
+            padding: 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .profile-card:hover {
+            border-color: #00ff41;
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+        }
+
+        .profile-card.active {
+            border-color: #00ff41;
+            background: #1a2f1a;
+        }
+
+        .profile-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .profile-desc {
+            color: #7d8590;
+            font-size: 0.9em;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #00ff41;
+            color: #0a0e27;
+            padding: 15px 25px;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.5);
+            display: none;
+            z-index: 1000;
+        }
+
+        .notification.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="notification" id="notification"></div>
+
+    <div class="container">
+        <header>
+            <a href="/" class="back-btn">← Back to Dashboard</a>
+            <h1>⚙️ CONFIGURATION</h1>
+            <p class="help-text">Configure Digipet attack profiles and settings</p>
+        </header>
+
+        <!-- Stealth Profile Selection -->
+        <div class="config-section">
+            <h2>Stealth Profile</h2>
+            <div class="profile-selector" id="profile-selector">
+                <!-- Profiles will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Attack Configuration -->
+        <div class="config-section">
+            <h2>Attack Modules</h2>
+
+            <div class="config-row">
+                <div class="config-label">Network Reconnaissance</div>
+                <div class="config-value">
+                    <input type="checkbox" id="network_recon_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Credential Harvesting</div>
+                <div class="config-value">
+                    <input type="checkbox" id="credential_harvesting_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Vulnerability Scanning</div>
+                <div class="config-value">
+                    <input type="checkbox" id="vulnerability_scanning_enabled">
+                </div>
+            </div>
+        </div>
+
+        <!-- Network Configuration -->
+        <div class="config-section">
+            <h2>Network Settings</h2>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Enable Nmap
+                    <div class="help-text">Use nmap for active port scanning</div>
+                </div>
+                <div class="config-value">
+                    <input type="checkbox" id="nmap_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Nmap Arguments
+                    <div class="help-text">Additional nmap flags (e.g., -sV -sC)</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="nmap_args" placeholder="-sV -sC">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Target Network
+                    <div class="help-text">CIDR notation (e.g., 192.168.1.0/24) or "auto"</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="target_network" placeholder="auto">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Responder Interface
+                    <div class="help-text">Network interface for credential harvesting</div>
+                </div>
+                <div class="config-value">
+                    <select id="responder_interface">
+                        <option value="wlan0">wlan0</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Enable Responder</div>
+                <div class="config-value">
+                    <input type="checkbox" id="responder_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Capture NTLM</div>
+                <div class="config-value">
+                    <input type="checkbox" id="capture_ntlm">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Capture Kerberos</div>
+                <div class="config-value">
+                    <input type="checkbox" id="capture_kerberos">
+                </div>
+            </div>
+        </div>
+
+        <!-- Display Configuration -->
+        <div class="config-section">
+            <h2>Display Settings</h2>
+
+            <div class="config-row">
+                <div class="config-label">Enable E-ink Display</div>
+                <div class="config-value">
+                    <input type="checkbox" id="display_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Update Interval (seconds)
+                    <div class="help-text">How often to refresh the display</div>
+                </div>
+                <div class="config-value">
+                    <input type="number" id="update_interval" min="1" max="60" value="4">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Show Attack Progress</div>
+                <div class="config-value">
+                    <input type="checkbox" id="show_attack_progress">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Show Evolution Status</div>
+                <div class="config-value">
+                    <input type="checkbox" id="show_evolution_status">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Sprite Animation</div>
+                <div class="config-value">
+                    <input type="checkbox" id="sprite_animation">
+                </div>
+            </div>
+        </div>
+
+        <!-- Notifications Configuration -->
+        <div class="config-section">
+            <h2>🔔 Notifications & Webhooks</h2>
+
+            <div class="config-row">
+                <div class="config-label">Enable Notifications</div>
+                <div class="config-value">
+                    <input type="checkbox" id="notifications_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Generic Webhook URL
+                    <div class="help-text">HTTP POST endpoint for custom integrations</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="webhook_url" placeholder="https://your-webhook-url.com/notify">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Slack Webhook URL
+                    <div class="help-text">Get from Slack: Workspace Settings → Incoming Webhooks</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="slack_webhook" placeholder="https://hooks.slack.com/services/YOUR/WEBHOOK/URL">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Discord Webhook URL
+                    <div class="help-text">Get from Discord: Server Settings → Integrations → Webhooks</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="discord_webhook" placeholder="https://discord.com/api/webhooks/YOUR/WEBHOOK">
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px;">Email Notifications</h3>
+
+            <div class="config-row">
+                <div class="config-label">Enable Email</div>
+                <div class="config-value">
+                    <input type="checkbox" id="email_enabled">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">SMTP Server</div>
+                <div class="config-value">
+                    <input type="text" id="email_smtp_server" placeholder="smtp.gmail.com">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">SMTP Port</div>
+                <div class="config-value">
+                    <input type="number" id="email_smtp_port" value="587">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Username</div>
+                <div class="config-value">
+                    <input type="text" id="email_username" placeholder="your@email.com">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Password</div>
+                <div class="config-value">
+                    <input type="password" id="email_password" placeholder="App password or email password">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">From Address</div>
+                <div class="config-value">
+                    <input type="text" id="email_from" placeholder="digipet@yourdomain.com">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    To Addresses
+                    <div class="help-text">Comma-separated list</div>
+                </div>
+                <div class="config-value">
+                    <input type="text" id="email_to" placeholder="admin@example.com, security@example.com">
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px;">Notification Triggers</h3>
+
+            <div class="config-row">
+                <div class="config-label">Critical Vulnerabilities (CVSS &gt; 7.0)</div>
+                <div class="config-value">
+                    <input type="checkbox" id="notify_critical_vuln">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Credential Captured</div>
+                <div class="config-value">
+                    <input type="checkbox" id="notify_credential_captured">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">Digipet Evolution</div>
+                <div class="config-value">
+                    <input type="checkbox" id="notify_evolution">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">High-Value Target Discovered</div>
+                <div class="config-value">
+                    <input type="checkbox" id="notify_high_value_target">
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label"></div>
+                <div class="config-value">
+                    <button class="btn" onclick="testNotifications()">🧪 Send Test Notification</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Management -->
+        <div class="config-section">
+            <h2>🗃️ Data Management</h2>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Database Size
+                    <div class="help-text">Current database file size</div>
+                </div>
+                <div class="config-value">
+                    <span id="db-size-display">Calculating...</span>
+                    <button class="btn" onclick="refreshDatabaseSize()">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px;">Backup & Optimize</h3>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Create Backup
+                    <div class="help-text">Save a timestamped copy of the database</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn" onclick="backupDatabase()">💾 Backup Now</button>
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Optimize Database
+                    <div class="help-text">Reclaim space and improve performance</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn" onclick="vacuumDatabase()">🧹 Optimize</button>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px; color: #ff9900;">Clear Data (Destructive)</h3>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Clear All Data
+                    <div class="help-text">⚠️ Remove ALL hosts, services, credentials, and vulnerabilities</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn btn-danger" onclick="clearAllData()">🗑️ Clear All</button>
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Clear Hosts Only
+                    <div class="help-text">Remove discovered hosts and their services</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn btn-danger" onclick="clearHosts()">🗑️ Clear Hosts</button>
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Clear Credentials
+                    <div class="help-text">Remove captured credentials</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn btn-danger" onclick="clearCredentials()">🗑️ Clear Credentials</button>
+                </div>
+            </div>
+
+            <div class="config-row">
+                <div class="config-label">
+                    Clear Activity Log
+                    <div class="help-text">Remove activity history (keeps recent 7 days)</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn btn-danger" onclick="clearActivityLog()">🗑️ Clear Old Logs</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Evolution Management -->
+        <div class="config-section">
+            <h2>Evolution Management</h2>
+            <div class="config-row">
+                <div class="config-label">
+                    Reset Evolution
+                    <div class="help-text">⚠️ This will reset your Digipet back to baby stage and clear all XP</div>
+                </div>
+                <div class="config-value">
+                    <button class="btn btn-danger" onclick="resetEvolution()">🥚 Reset to Baby Stage</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <button class="btn" onclick="saveConfig()">💾 Save Configuration</button>
+            <button class="btn btn-danger" onclick="resetConfig()">🔄 Reset to Defaults</button>
+        </div>
+    </div>
+
+    <script>
+        // Get credentials from sessionStorage for API calls
+        function getAuthHeaders() {
+            const credentials = sessionStorage.getItem('authCredentials');
+            return credentials ? {'Authorization': 'Basic ' + credentials} : {};
+        }
+
+        async function fetchAPI(endpoint) {
+            const response = await fetch(`/api/${endpoint}`, {
+                headers: getAuthHeaders()
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/login';
+                throw new Error('Authentication required');
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.json();
+        }
+
+        async function postAPI(endpoint, data = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...getAuthHeaders()
+            };
+
+            const response = await fetch(`/api/${endpoint}`, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/login';
+                throw new Error('Authentication required');
+            }
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return response.json();
+        }
+
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        async function loadConfig() {
+            try {
+                const data = await fetchAPI('config');
+
+                // Load stealth profiles
+                loadProfiles(data);
+
+                // Load attack config
+                const attack = data.attack_config;
+                document.getElementById('network_recon_enabled').checked = attack.network_recon_enabled;
+                document.getElementById('credential_harvesting_enabled').checked = attack.credential_harvesting_enabled;
+                document.getElementById('vulnerability_scanning_enabled').checked = attack.vulnerability_scanning_enabled;
+                document.getElementById('nmap_enabled').checked = attack.nmap_enabled;
+                document.getElementById('nmap_args').value = attack.nmap_args;
+                document.getElementById('target_network').value = attack.target_network;
+                document.getElementById('responder_enabled').checked = attack.responder_enabled;
+                document.getElementById('responder_interface').value = attack.responder_interface;
+                document.getElementById('capture_ntlm').checked = attack.capture_ntlm;
+                document.getElementById('capture_kerberos').checked = attack.capture_kerberos;
+
+                // Load display config
+                const display = data.display_config;
+                document.getElementById('display_enabled').checked = display.enabled;
+                document.getElementById('update_interval').value = display.update_interval;
+                document.getElementById('show_attack_progress').checked = display.show_attack_progress;
+                document.getElementById('show_evolution_status').checked = display.show_evolution_status;
+                document.getElementById('sprite_animation').checked = display.sprite_animation;
+
+                // Load notification config
+                const notifData = await fetchAPI('notifications/config');
+                document.getElementById('notifications_enabled').checked = notifData.enabled || false;
+                document.getElementById('webhook_url').value = notifData.webhook_url || '';
+                document.getElementById('slack_webhook').value = notifData.slack_webhook || '';
+                document.getElementById('discord_webhook').value = notifData.discord_webhook || '';
+                document.getElementById('email_enabled').checked = notifData.email_enabled || false;
+                document.getElementById('email_smtp_server').value = notifData.email_smtp_server || '';
+                document.getElementById('email_smtp_port').value = notifData.email_smtp_port || 587;
+                document.getElementById('email_username').value = notifData.email_username || '';
+                document.getElementById('email_password').value = ''; // Never load password
+                document.getElementById('email_from').value = notifData.email_from || '';
+                document.getElementById('email_to').value = notifData.email_to ? notifData.email_to.join(', ') : '';
+
+                const notifyOn = notifData.notify_on || {};
+                document.getElementById('notify_critical_vuln').checked = notifyOn.critical_vuln !== false;
+                document.getElementById('notify_credential_captured').checked = notifyOn.credential_captured !== false;
+                document.getElementById('notify_evolution').checked = notifyOn.evolution !== false;
+                document.getElementById('notify_high_value_target').checked = notifyOn.high_value_target !== false;
+
+                // Load network interfaces
+                loadInterfaces();
+            } catch (error) {
+                console.error('Error loading config:', error);
+                showNotification('❌ Error loading configuration');
+            }
+        }
+
+        function loadProfiles(configData) {
+            const profiles = {
+                'aggressive': {
+                    name: 'Aggressive',
+                    description: 'Fast scans, maximum intel gathering speed'
+                },
+                'normal': {
+                    name: 'Normal',
+                    description: 'Balanced speed and stealth'
+                },
+                'stealth': {
+                    name: 'Stealth',
+                    description: 'Slow, careful scans to avoid detection'
+                },
+                'passive': {
+                    name: 'Passive',
+                    description: 'Only passive reconnaissance'
+                }
+            };
+
+            const container = document.getElementById('profile-selector');
+            container.innerHTML = '';
+
+            for (const [key, profile] of Object.entries(profiles)) {
+                const card = document.createElement('div');
+                card.className = 'profile-card';
+                if (key === configData.current_profile) {
+                    card.classList.add('active');
+                }
+                card.innerHTML = `
+                    <div class="profile-name">${profile.name}</div>
+                    <div class="profile-desc">${profile.description}</div>
+                `;
+                card.onclick = () => selectProfile(key);
+                container.appendChild(card);
+            }
+        }
+
+        async function selectProfile(profileName) {
+            try {
+                await postAPI('config/profile', {profile: profileName});
+                showNotification(`✅ Profile changed to ${profileName}`);
+                loadConfig(); // Reload to update UI
+            } catch (error) {
+                console.error('Error selecting profile:', error);
+                showNotification('❌ Error changing profile');
+            }
+        }
+
+        async function loadInterfaces() {
+            try {
+                const data = await fetchAPI('system/interfaces');
+                const select = document.getElementById('responder_interface');
+                select.innerHTML = '';
+
+                data.interfaces.forEach(iface => {
+                    const option = document.createElement('option');
+                    option.value = iface.name;
+                    option.textContent = `${iface.name} (${iface.ip})`;
+                    select.appendChild(option);
+                });
+
+                // Set current value
+                const currentConfig = await fetchAPI('config');
+                select.value = currentConfig.attack_config.responder_interface;
+            } catch (error) {
+                console.error('Error loading interfaces:', error);
+            }
+        }
+
+        async function saveConfig() {
+            try {
+                // Save attack config
+                const attackConfig = {
+                    network_recon_enabled: document.getElementById('network_recon_enabled').checked,
+                    credential_harvesting_enabled: document.getElementById('credential_harvesting_enabled').checked,
+                    vulnerability_scanning_enabled: document.getElementById('vulnerability_scanning_enabled').checked,
+                    nmap_enabled: document.getElementById('nmap_enabled').checked,
+                    nmap_args: document.getElementById('nmap_args').value,
+                    target_network: document.getElementById('target_network').value,
+                    responder_enabled: document.getElementById('responder_enabled').checked,
+                    responder_interface: document.getElementById('responder_interface').value,
+                    capture_ntlm: document.getElementById('capture_ntlm').checked,
+                    capture_kerberos: document.getElementById('capture_kerberos').checked
+                };
+
+                await postAPI('config/attack', attackConfig);
+
+                // Save display config
+                const displayConfig = {
+                    enabled: document.getElementById('display_enabled').checked,
+                    update_interval: parseInt(document.getElementById('update_interval').value),
+                    show_attack_progress: document.getElementById('show_attack_progress').checked,
+                    show_evolution_status: document.getElementById('show_evolution_status').checked,
+                    sprite_animation: document.getElementById('sprite_animation').checked
+                };
+
+                await postAPI('config/display', displayConfig);
+
+                // Save notification config
+                const emailTo = document.getElementById('email_to').value;
+                const notificationConfig = {
+                    enabled: document.getElementById('notifications_enabled').checked,
+                    webhook_url: document.getElementById('webhook_url').value || null,
+                    slack_webhook: document.getElementById('slack_webhook').value || null,
+                    discord_webhook: document.getElementById('discord_webhook').value || null,
+                    email_enabled: document.getElementById('email_enabled').checked,
+                    email_smtp_server: document.getElementById('email_smtp_server').value || null,
+                    email_smtp_port: parseInt(document.getElementById('email_smtp_port').value) || 587,
+                    email_username: document.getElementById('email_username').value || null,
+                    email_password: document.getElementById('email_password').value || null,
+                    email_from: document.getElementById('email_from').value || null,
+                    email_to: emailTo ? emailTo.split(',').map(e => e.trim()) : [],
+                    notify_on: {
+                        critical_vuln: document.getElementById('notify_critical_vuln').checked,
+                        credential_captured: document.getElementById('notify_credential_captured').checked,
+                        evolution: document.getElementById('notify_evolution').checked,
+                        high_value_target: document.getElementById('notify_high_value_target').checked
+                    }
+                };
+
+                await postAPI('notifications/config', notificationConfig);
+
+                // Persist to disk
+                await postAPI('config/save');
+
+                showNotification('✅ Configuration saved successfully!');
+            } catch (error) {
+                console.error('Error saving config:', error);
+                showNotification('❌ Error saving configuration');
+            }
+        }
+
+        async function testNotifications() {
+            try {
+                showNotification('📤 Sending test notification...');
+                await postAPI('notifications/test');
+                showNotification('✅ Test notification sent! Check your configured channels.');
+            } catch (error) {
+                console.error('Error sending test notification:', error);
+                showNotification('❌ Failed to send test notification');
+            }
+        }
+
+        async function resetEvolution() {
+            if (confirm('⚠️ Are you sure you want to reset your Digipet evolution?\n\nThis will:\n- Reset to Botamon (Baby stage)\n- Clear all XP\n- Reset evolution stats\n\nThis CANNOT be undone!')) {
+                try {
+                    await postAPI('evolution/reset');
+                    showNotification('✅ Evolution reset! Your Digipet is now a baby again 🥚');
+                    // Reload page to show new evolution status
+                    setTimeout(() => window.location.reload(), 2000);
+                } catch (error) {
+                    console.error('Error resetting evolution:', error);
+                    showNotification('❌ Error resetting evolution');
+                }
+            }
+        }
+
+        async function resetConfig() {
+            if (confirm('Are you sure you want to reset all configuration to defaults?')) {
+                showNotification('⚠️ Reset not implemented yet');
+            }
+        }
+
+        // Data Management Functions
+        async function refreshDatabaseSize() {
+            try {
+                const sizeData = await fetchAPI('database/size');
+                document.getElementById('db-size-display').textContent =
+                    `${sizeData.size_human} (${sizeData.size_bytes.toLocaleString()} bytes)`;
+            } catch (error) {
+                console.error('Error fetching database size:', error);
+                showNotification('❌ Error fetching database size');
+            }
+        }
+
+        async function backupDatabase() {
+            try {
+                showNotification('💾 Creating backup...');
+                const result = await postAPI('database/backup');
+                showNotification(`✅ Backup created: ${result.backup_path}`);
+            } catch (error) {
+                console.error('Error backing up database:', error);
+                showNotification('❌ Backup failed');
+            }
+        }
+
+        async function vacuumDatabase() {
+            if (!confirm('Optimize database? This will reclaim unused space.')) return;
+
+            try {
+                showNotification('🧹 Optimizing database...');
+                const result = await postAPI('database/vacuum');
+                showNotification(`✅ Database optimized! New size: ${result.size.size_human}`);
+                refreshDatabaseSize();
+            } catch (error) {
+                console.error('Error vacuuming database:', error);
+                showNotification('❌ Optimization failed');
+            }
+        }
+
+        async function clearAllData() {
+            if (!confirm('⚠️ WARNING: This will delete ALL discovered data!\n\n' +
+                        'This includes:\n' +
+                        '- All hosts\n' +
+                        '- All services\n' +
+                        '- All credentials\n' +
+                        '- All vulnerabilities\n\n' +
+                        'Activity log will be preserved.\n\n' +
+                        'This CANNOT be undone! Continue?')) return;
+
+            try {
+                showNotification('🗑️ Clearing all data...');
+                const result = await postAPI('data/clear/all', {keep_activity_log: true});
+                showNotification(`✅ Cleared ${result.stats.hosts_deleted} hosts, ` +
+                               `${result.stats.services_deleted} services, ` +
+                               `${result.stats.credentials_deleted} credentials, ` +
+                               `${result.stats.vulnerabilities_deleted} vulnerabilities`);
+                setTimeout(() => window.location.reload(), 2000);
+            } catch (error) {
+                console.error('Error clearing data:', error);
+                showNotification(error.message || '❌ Failed to clear data');
+            }
+        }
+
+        async function clearHosts() {
+            if (!confirm('Clear all discovered hosts and their services? This cannot be undone!')) return;
+
+            try {
+                showNotification('🗑️ Clearing hosts...');
+                const result = await postAPI('data/clear/hosts');
+                showNotification(`✅ Cleared ${result.hosts_deleted} hosts`);
+                setTimeout(() => window.location.reload(), 1500);
+            } catch (error) {
+                console.error('Error clearing hosts:', error);
+                showNotification(error.message || '❌ Failed to clear hosts');
+            }
+        }
+
+        async function clearCredentials() {
+            if (!confirm('Clear all captured credentials? This cannot be undone!')) return;
+
+            try {
+                showNotification('🗑️ Clearing credentials...');
+                const result = await postAPI('data/clear/credentials');
+                showNotification(`✅ Cleared ${result.credentials_deleted} credentials`);
+            } catch (error) {
+                console.error('Error clearing credentials:', error);
+                showNotification('❌ Failed to clear credentials');
+            }
+        }
+
+        async function clearActivityLog() {
+            if (!confirm('Clear activity log older than 7 days?')) return;
+
+            try {
+                showNotification('🗑️ Clearing old activity logs...');
+                const result = await postAPI('data/clear/activity', {older_than_days: 7});
+                showNotification(`✅ Cleared ${result.activities_deleted} old log entries`);
+            } catch (error) {
+                console.error('Error clearing activity log:', error);
+                showNotification('❌ Failed to clear activity log');
+            }
+        }
+
+        // Load config on page load
+        window.addEventListener('load', () => {
+            loadConfig();
+            refreshDatabaseSize();
+        });
+    </script>
+</body>
+</html>

@@ -1,3 +1,66 @@
-# Ignore Python cache files
+# Digipet specific
+.digipet/
+*.db
+*.log
+evolution.json
+config.json
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Responder logs (sensitive)
+Responder-Session.log
+logs/
+*.ntlm
+*.kerberos
+
+# Credentials and sensitive data
+*.pcap
+*.cap
+handshakes/
+credentials.txt
+hashes.txt
+
+# System
+.Trash-*
+Thumbs.db
