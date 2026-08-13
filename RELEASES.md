@@ -52,9 +52,9 @@ The tag triggers `.github/workflows/release.yml`. The workflow refuses to
 publish if the signing secret is missing or if verification with the committed
 public key fails.
 
-## Future OTA client rules
+## OTA client rules
 
-The device-side updater should:
+The device-side updater follows these rules:
 
 1. Run only after an explicit update check or configured maintenance event.
 2. Download `digipet-manifest.json` and `digipet-manifest.sig` over HTTPS.
@@ -62,8 +62,10 @@ The device-side updater should:
 4. Validate `schema`, `product`, `target`, and a strictly newer semantic version.
 5. Stream the application image into the inactive OTA partition.
 6. Verify its exact byte count and SHA-256 digest before selecting it to boot.
-7. Reboot, perform a health check, and mark the new application valid.
-8. Allow the bootloader to roll back automatically if validation fails.
+
+The current client implements steps 1-6. Automatic post-boot health validation
+and bootloader rollback are planned production hardening; until then, retain USB
+recovery access when testing a newly published firmware image.
 
 Never install an image based only on a URL, filename, GitHub account name, or
 unsigned checksum. The updater must fail closed while normal offline Digipet

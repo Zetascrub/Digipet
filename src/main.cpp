@@ -16,6 +16,7 @@
 
 #include "pin_config.h"
 #include "familiar_battle_service.h"
+#include "ota_updater.h"
 
 struct PetState {
   uint32_t magic;
@@ -125,6 +126,7 @@ uint8_t playerId[32]{};
 char playerIdHex[65]{};
 uint64_t playerIdTimestamp = 0;
 bool showingPlayerId = false;
+bool showingUpdate = false;
 
 struct NetworkConfig {
   char ssid[65];
@@ -964,8 +966,12 @@ void drawSettingsPage() {
   drawAdjuster("SPEAKER VOLUME", VOLUME_LABELS[settings.volumeIndex], 193);
   drawAdjuster("WAKE CONTROL", WAKE_LABELS[settings.wakeMode], 255);
   drawToggle("BOOT FX", settings.bootAnimationEnabled, 328);
-  display->fillRoundRect(92, 390, 184, 35, 12, COLOR_PURPLE);
-  drawCentered("PLAYER ID", 403, 1, COLOR_TEXT);
+  display->fillRoundRect(18, 390, 160, 35, 12, COLOR_PURPLE);
+  display->fillRoundRect(190, 390, 160, 35, 12, COLOR_CYAN);
+  display->setTextSize(1);
+  display->setTextColor(COLOR_TEXT);
+  display->setCursor(66, 403); display->print("PLAYER ID");
+  display->setCursor(233, 403); display->print("UPDATE");
   drawPageDots(PAGE_SETTINGS);
 }
 
@@ -1000,6 +1006,43 @@ void presentPlayerIdPage() {
     panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
   } else {
     drawPlayerIdPage();
+  }
+}
+
+void drawUpdatePage(const char *status, int progress) {
+  display->fillScreen(COLOR_BACKGROUND);
+  drawCentered("SIGNED UPDATE", 30, 3, COLOR_MINT);
+  drawCentered("DIGIPET OTA // ECDSA P-256", 68, 1, COLOR_CYAN);
+  display->fillRoundRect(24, 110, 320, 208, 26, COLOR_CARD);
+  display->drawRoundRect(32, 118, 304, 192, 20, COLOR_PURPLE);
+  display->drawCircle(184, 184, 43, COLOR_CYAN);
+  display->drawCircle(184, 184, 29, COLOR_MINT);
+  display->fillCircle(184, 184, 10, progress >= 0 ? COLOR_MINT : COLOR_WARNING);
+  drawCentered(status, 249, 1, COLOR_TEXT);
+  if (progress >= 0) {
+    display->drawRoundRect(52, 280, 264, 17, 7, COLOR_MUTED);
+    if (progress) display->fillRoundRect(55, 283, 258 * progress / 100, 11, 5, COLOR_MINT);
+    char percent[8];
+    snprintf(percent, sizeof(percent), "%d%%", progress);
+    drawCentered(percent, 332, 2, COLOR_CYAN);
+  } else {
+    drawCentered("TAP TO RETURN", 343, 2, COLOR_CYAN);
+  }
+  display->setTextSize(1);
+  display->setTextColor(COLOR_MUTED);
+  display->setCursor(125, 410);
+  display->printf("INSTALLED v%s", DIGIPET_VERSION);
+}
+
+void presentUpdatePage(const char *status, int progress) {
+  if (transitionsReady) {
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasA;
+    drawUpdatePage(status, progress);
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+  } else {
+    drawUpdatePage(status, progress);
   }
 }
 
@@ -1401,6 +1444,7 @@ void handleBattleTap(int16_t x, int16_t y) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("Digipet firmware v%s\n", DIGIPET_VERSION);
   Wire.begin(IIC_SDA, IIC_SCL);
   preferences.begin("digipet", false);
   loadSettings();
@@ -1538,8 +1582,9 @@ void loop() {
     if (touchStartX >= 0) {
       const int32_t deltaX = touchLastX - touchStartX;
       const int32_t deltaY = touchLastY - touchStartY;
-      if (showingPlayerId) {
+      if (showingPlayerId || showingUpdate) {
         showingPlayerId = false;
+        showingUpdate = false;
         if (transitionsReady) {
           renderPageToCanvas(PAGE_SETTINGS, pageCanvasA);
           panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(),
@@ -1572,8 +1617,20 @@ void loop() {
         else performAction(2);
       } else if (currentPage == PAGE_SETTINGS) {
         if (touchLastY >= 382) {
-          showingPlayerId = true;
-          presentPlayerIdPage();
+          if (touchLastX < LCD_WIDTH / 2) {
+            showingPlayerId = true;
+            presentPlayerIdPage();
+          } else {
+            showingUpdate = true;
+            presentUpdatePage("STARTING SECURE CHECK", 0);
+            const OtaResult otaResult = performSignedOta(
+                networkConfig.ssid, networkConfig.password,
+                [](const char *status, int progress) {
+                  presentUpdatePage(status, progress);
+                });
+            presentUpdatePage(otaResultMessage(otaResult), -1);
+            lastInteraction = millis();
+          }
         } else {
           changeSetting(touchLastX, touchLastY);
         }

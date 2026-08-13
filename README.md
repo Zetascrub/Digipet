@@ -19,6 +19,7 @@ artwork or proprietary assets.
 - Hardware diagnostics for the IMU, RTC, power controller, and audio codec
 - Cross-device BLE battles compatible with the included VPet Battle protocol
 - Runtime SHA-256 player identity generation
+- Manual signed OTA update checks from the Settings page
 - Persistent settings and virtual-pet state through ESP32 Preferences/NVS
 
 Poop and illness mechanics are intentionally excluded.
