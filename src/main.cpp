@@ -880,12 +880,298 @@ void drawEgg(bool frame, uint16_t bg) {
   }
 }
 
+int geneScale(uint8_t gene, int minimum, int maximum) {
+  return minimum + (static_cast<int>(gene) * (maximum - minimum)) / 255;
+}
+
+void drawElementAura(const PetPalette &palette, int cx, int cy, int radius,
+                     uint8_t phase) {
+  for (uint8_t i = 0; i < 8; ++i) {
+    const uint8_t orbit = (phase + i * 4) & 31;
+    const int wave = orbit < 16 ? orbit : 31 - orbit;
+    const int x = cx + (wave - 8) * radius / 8;
+    const int y = cy - radius + ((phase * 5 + i * 17) % (radius * 2));
+    const uint16_t color = i & 1 ? palette.glow : palette.accent;
+    switch (pet.genome.element % 6) {
+      case 0:
+        display->fillTriangle(x - 4, y + 6, x + 4, y + 6, x, y - 7, color);
+        break;
+      case 1:
+        display->drawCircle(x, y, 3 + (i & 1), color);
+        break;
+      case 2:
+        display->fillEllipse(x, y, 5, 2, color);
+        break;
+      case 3:
+        display->drawLine(x - 4, y - 5, x + 1, y, color);
+        display->drawLine(x + 1, y, x - 2, y + 6, color);
+        break;
+      case 4:
+        display->fillCircle(x, y, 2 + (i & 1), color);
+        display->drawCircle(x, y, 6, palette.secondary);
+        break;
+      default:
+        display->fillRect(x - 3, y - 3, 6, 6, color);
+        break;
+    }
+  }
+}
+
+void drawGenomeMarkings(const PetPalette &palette, int cx, int cy,
+                        int width, int height, uint8_t stage) {
+  switch (pet.genome.markingGene % 5) {
+    case 0:  // stripes
+      for (int y = cy - height / 4; y <= cy + height / 4; y += 13)
+        display->fillRoundRect(cx - width / 3, y, width * 2 / 3, 4, 2,
+                               palette.secondary);
+      break;
+    case 1:  // spots
+      for (uint8_t i = 0; i < 5 + stage; ++i) {
+        const int x = cx - width / 3 + ((pet.genome.seed[1] >> (i * 3 % 24)) %
+                                        max(1, width * 2 / 3));
+        const int y = cy - height / 4 + ((pet.genome.seed[2] >> (i * 3 % 24)) %
+                                         max(1, height / 2));
+        display->fillCircle(x, y, 3 + (i & 2), palette.secondary);
+      }
+      break;
+    case 2:  // circuit
+      display->drawLine(cx - width / 3, cy, cx - 8, cy, palette.accent);
+      display->drawLine(cx - 8, cy, cx - 8, cy + height / 4, palette.accent);
+      display->drawLine(cx - 8, cy + height / 4, cx + width / 3,
+                        cy + height / 4, palette.accent);
+      display->fillCircle(cx - width / 3, cy, 4, palette.glow);
+      display->fillCircle(cx + width / 3, cy + height / 4, 4, palette.glow);
+      break;
+    case 3:  // scales
+      for (int row = -1; row <= 1; ++row)
+        for (int column = -2; column <= 2; ++column)
+          display->drawCircle(cx + column * 12 + (row & 1) * 6,
+                              cy + row * 13, 7, palette.secondary);
+      break;
+    default:  // elemental core
+      display->drawCircle(cx, cy + 4, 14 + stage * 2, palette.accent);
+      display->fillCircle(cx, cy + 4, 7 + stage, palette.glow);
+      break;
+  }
+}
+
+void drawGenomeFace(const PetPalette &palette, int cx, int cy, int headWidth,
+                    bool blink, uint8_t stage) {
+  const int spread = max(12, headWidth / 4);
+  const int eyeWidth = 8 + (pet.genome.faceGene % 5);
+  const int eyeHeight = 13 + ((pet.genome.faceGene >> 2) % 6);
+  for (int direction : {-1, 1}) {
+    const int x = cx + direction * spread;
+    if (blink) {
+      display->fillRoundRect(x - eyeWidth, cy, eyeWidth * 2, 4, 2,
+                             palette.primaryDark);
+    } else {
+      display->fillEllipse(x, cy, eyeWidth, eyeHeight, COLOR_TEXT);
+      display->fillEllipse(x + direction * 2, cy + 2, eyeWidth - 3,
+                           eyeHeight - 4, palette.primaryDark);
+      display->fillCircle(x + direction * 3, cy - 4, 3, palette.glow);
+      display->fillCircle(x + direction * 4, cy - 6, 1, RGB565_WHITE);
+    }
+  }
+  if ((pet.genome.faceGene & 1) == 0) {
+    display->drawLine(cx - 10, cy + 24, cx, cy + 29, palette.primaryDark);
+    display->drawLine(cx, cy + 29, cx + 10, cy + 24, palette.primaryDark);
+  } else {
+    display->fillTriangle(cx - 8, cy + 23, cx + 8, cy + 23,
+                          cx, cy + 31, palette.primaryDark);
+    if (stage >= 3) display->fillTriangle(cx - 5, cy + 24, cx, cy + 31,
+                                          cx + 5, cy + 24, COLOR_TEXT);
+  }
+}
+
+void drawProceduralCreature(bool asleep) {
+  const PetPalette palette = paletteForGenome(pet.genome);
+  const uint8_t stage = constrain(pet.stage, 1, 4);
+  const uint8_t phase = (millis() / 90) & 31;
+  const int wave = phase < 16 ? phase : 31 - phase;
+  const int bob = asleep ? 5 : (wave - 8) / 4;
+  const bool blink = asleep || (millis() % 3400) > 3260;
+  const int cx = 184;
+  const int baseY = 316 + bob;
+  const int growth = (stage - 1) * 9;
+  const int bodyWidth = geneScale(pet.genome.widthGene, 82, 132) + growth;
+  const int bodyHeight = geneScale(pet.genome.heightGene, 75, 126) + growth;
+  const int headWidth = geneScale(pet.genome.headGene, 76, 118) + growth / 2;
+  const int headHeight = headWidth * 4 / 5;
+  const int headY = baseY - bodyHeight - headHeight / 2 + 24;
+  const uint8_t bodyType = pet.genome.bodyType % 5;
+
+  drawElementAura(palette, cx, baseY - 105, 90 + stage * 5, phase);
+  display->fillEllipse(cx, baseY + 6, 68 + growth, 10 + stage, COLOR_CARD);
+  display->fillEllipse(cx + 7, baseY + 4, 48 + growth, 5 + stage / 2,
+                       palette.primaryDark);
+
+  // Rear silhouette: tails, wings and stage-dependent mutations.
+  const int tailSwing = (wave - 8) * 3;
+  if ((pet.genome.featureGenes & 0x20) || bodyType == 0 || bodyType == 4) {
+    display->fillTriangle(cx + bodyWidth / 3, baseY - 64,
+                          cx + bodyWidth / 2 + 54, baseY - 80 + tailSwing,
+                          cx + bodyWidth / 2 - 3, baseY - 33,
+                          COLOR_TEXT);
+    display->fillTriangle(cx + bodyWidth / 3 + 3, baseY - 62,
+                          cx + bodyWidth / 2 + 43, baseY - 77 + tailSwing,
+                          cx + bodyWidth / 2 - 1, baseY - 39,
+                          palette.secondary);
+  }
+  if ((pet.genome.featureGenes & 0x08) || bodyType == 2) {
+    const int wingLift = asleep ? 8 : (wave - 8);
+    display->fillTriangle(cx - bodyWidth / 3, baseY - 112,
+                          cx - bodyWidth / 2 - 58, baseY - 144 - wingLift,
+                          cx - bodyWidth / 2 + 5, baseY - 56, COLOR_TEXT);
+    display->fillTriangle(cx + bodyWidth / 3, baseY - 112,
+                          cx + bodyWidth / 2 + 58, baseY - 144 - wingLift,
+                          cx + bodyWidth / 2 - 5, baseY - 56, COLOR_TEXT);
+    display->fillTriangle(cx - bodyWidth / 3 - 3, baseY - 108,
+                          cx - bodyWidth / 2 - 45, baseY - 137 - wingLift,
+                          cx - bodyWidth / 2 + 8, baseY - 64, palette.secondary);
+    display->fillTriangle(cx + bodyWidth / 3 + 3, baseY - 108,
+                          cx + bodyWidth / 2 + 45, baseY - 137 - wingLift,
+                          cx + bodyWidth / 2 - 8, baseY - 64, palette.secondary);
+  }
+
+  int bodyCx = cx;
+  int bodyCy = baseY - bodyHeight / 2;
+  if (bodyType == 4) {  // serpent: overlapping coils and raised torso
+    display->fillEllipse(cx, baseY - 10, bodyWidth / 2 + 25, 25, COLOR_TEXT);
+    display->fillEllipse(cx + 4, baseY - 12, bodyWidth / 2 + 17, 18,
+                         palette.primaryDark);
+    display->fillEllipse(cx - 25, baseY - 34, bodyWidth / 2, 31, COLOR_TEXT);
+    display->fillEllipse(cx - 20, baseY - 37, bodyWidth / 2 - 6, 24,
+                         palette.primary);
+    bodyCy -= 8;
+    display->fillRoundRect(cx - bodyWidth / 3, bodyCy - bodyHeight / 2,
+                           bodyWidth * 2 / 3, bodyHeight, bodyWidth / 3, COLOR_TEXT);
+    display->fillRoundRect(cx - bodyWidth / 3 + 6, bodyCy - bodyHeight / 2 + 5,
+                           bodyWidth * 2 / 3 - 12, bodyHeight - 11,
+                           bodyWidth / 3 - 5, palette.primary);
+  } else if (bodyType == 0) {  // quadruped: broad torso and four grounded legs
+    bodyCy = baseY - 67;
+    display->fillRoundRect(cx - bodyWidth / 2, bodyCy - bodyHeight / 3,
+                           bodyWidth, bodyHeight * 2 / 3, bodyHeight / 3, COLOR_TEXT);
+    display->fillRoundRect(cx - bodyWidth / 2 + 6, bodyCy - bodyHeight / 3 + 5,
+                           bodyWidth - 12, bodyHeight * 2 / 3 - 10,
+                           bodyHeight / 3 - 4, palette.primary);
+    for (int direction : {-1, 1}) {
+      for (int inner : {0, 1}) {
+        const int legX = cx + direction * (bodyWidth / 4 + inner * 17);
+        display->fillRoundRect(legX - 14, baseY - 67, 28, 68, 12, COLOR_TEXT);
+        display->fillRoundRect(legX - 9, baseY - 64, 18, 57, 8,
+                               inner ? palette.primaryDark : palette.primary);
+        display->fillEllipse(legX + direction * 4, baseY, 18, 8, COLOR_TEXT);
+      }
+    }
+  } else if (bodyType == 2) {  // avian: tapered feather body and talons
+    bodyCy = baseY - bodyHeight / 2;
+    display->fillTriangle(cx, bodyCy - bodyHeight / 2, cx - bodyWidth / 2,
+                          baseY - 29, cx, baseY - 2, COLOR_TEXT);
+    display->fillTriangle(cx, bodyCy - bodyHeight / 2 + 7,
+                          cx - bodyWidth / 2 + 8, baseY - 31,
+                          cx, baseY - 10, palette.primary);
+    display->fillTriangle(cx, bodyCy - bodyHeight / 2, cx + bodyWidth / 2,
+                          baseY - 29, cx, baseY - 2, COLOR_TEXT);
+    display->fillTriangle(cx, bodyCy - bodyHeight / 2 + 7,
+                          cx + bodyWidth / 2 - 8, baseY - 31,
+                          cx, baseY - 10, palette.primaryLight);
+    for (int direction : {-1, 1}) {
+      display->drawLine(cx + direction * 20, baseY - 25,
+                        cx + direction * 24, baseY, COLOR_TEXT);
+      display->drawLine(cx + direction * 24, baseY,
+                        cx + direction * 35, baseY + 3, COLOR_TEXT);
+    }
+  } else if (bodyType == 3) {  // blob: soft weighted body and tiny feet
+    bodyCy = baseY - bodyHeight / 2;
+    display->fillEllipse(cx, bodyCy, bodyWidth / 2, bodyHeight / 2, COLOR_TEXT);
+    display->fillEllipse(cx + 5, bodyCy - 4, bodyWidth / 2 - 6,
+                         bodyHeight / 2 - 6, palette.primary);
+    display->fillEllipse(cx - 24, baseY - 3, 25, 10, COLOR_TEXT);
+    display->fillEllipse(cx + 24, baseY - 3, 25, 10, COLOR_TEXT);
+  } else {  // humanoid: torso, articulated arms and legs
+    bodyCy = baseY - bodyHeight / 2;
+    display->fillRoundRect(cx - bodyWidth / 2, bodyCy - bodyHeight / 2,
+                           bodyWidth, bodyHeight, bodyWidth / 4, COLOR_TEXT);
+    display->fillRoundRect(cx - bodyWidth / 2 + 6, bodyCy - bodyHeight / 2 + 6,
+                           bodyWidth - 12, bodyHeight - 12, bodyWidth / 4 - 3,
+                           palette.primary);
+    for (int direction : {-1, 1}) {
+      const int armX = cx + direction * (bodyWidth / 2 + 11);
+      display->fillRoundRect(armX - 13, bodyCy - bodyHeight / 3,
+                             26, bodyHeight * 2 / 3, 12, COLOR_TEXT);
+      display->fillRoundRect(armX - 8, bodyCy - bodyHeight / 3 + 5,
+                             16, bodyHeight * 2 / 3 - 10, 8, palette.secondary);
+      const int legX = cx + direction * bodyWidth / 4;
+      display->fillRoundRect(legX - 17, baseY - 58, 34, 62, 13, COLOR_TEXT);
+      display->fillRoundRect(legX - 11, baseY - 54, 22, 51, 9,
+                             palette.primaryDark);
+      display->fillEllipse(legX + direction * 5, baseY + 1, 22, 8, COLOR_TEXT);
+    }
+  }
+
+  drawGenomeMarkings(palette, bodyCx, bodyCy, bodyWidth, bodyHeight, stage);
+
+  // Head, ears/horns and foreground identity features.
+  if ((pet.genome.featureGenes & 0x01) || stage >= 3) {
+    display->fillTriangle(cx - headWidth / 3, headY - headHeight / 3,
+                          cx - headWidth / 2, headY - headHeight,
+                          cx - 5, headY - headHeight / 2, COLOR_TEXT);
+    display->fillTriangle(cx + headWidth / 3, headY - headHeight / 3,
+                          cx + headWidth / 2, headY - headHeight,
+                          cx + 5, headY - headHeight / 2, COLOR_TEXT);
+    display->fillTriangle(cx - headWidth / 3 + 4, headY - headHeight / 3,
+                          cx - headWidth / 2 + 7, headY - headHeight + 13,
+                          cx - 7, headY - headHeight / 2, palette.accent);
+    display->fillTriangle(cx + headWidth / 3 - 4, headY - headHeight / 3,
+                          cx + headWidth / 2 - 7, headY - headHeight + 13,
+                          cx + 7, headY - headHeight / 2, palette.accent);
+  }
+  display->fillEllipse(cx, headY, headWidth / 2 + 5, headHeight / 2 + 5, COLOR_TEXT);
+  display->fillEllipse(cx + 4, headY - 3, headWidth / 2 - 2,
+                       headHeight / 2 - 2, palette.primary);
+  display->fillEllipse(cx + headWidth / 6, headY - headHeight / 6,
+                       headWidth / 5, headHeight / 7, palette.primaryLight);
+
+  if ((pet.genome.featureGenes & 0x02) || bodyType == 2) {
+    const int earSize = 20 + stage * 3;
+    display->fillTriangle(cx - headWidth / 3, headY - headHeight / 3,
+                          cx - headWidth / 2 - earSize, headY - headHeight / 2,
+                          cx - headWidth / 2 + 3, headY, palette.secondary);
+    display->fillTriangle(cx + headWidth / 3, headY - headHeight / 3,
+                          cx + headWidth / 2 + earSize, headY - headHeight / 2,
+                          cx + headWidth / 2 - 3, headY, palette.secondary);
+  }
+  if ((pet.genome.featureGenes & 0x80) && stage >= 2) {
+    for (int direction : {-1, 1})
+      display->fillTriangle(cx + direction * headWidth / 3, headY - headHeight / 3,
+                            cx + direction * (headWidth / 2 + 15), headY - 8,
+                            cx + direction * headWidth / 2, headY + 18,
+                            palette.accent);
+  }
+  if (stage >= 3 || (pet.genome.featureGenes & 0x100)) {
+    display->drawRoundRect(cx - headWidth / 2 + 3, headY - headHeight / 2 + 4,
+                           headWidth - 6, headHeight - 8, headHeight / 3,
+                           palette.accent);
+  }
+  drawGenomeFace(palette, cx, headY, headWidth, blink, stage);
+
+  if (pet.genome.mutationGenes) {
+    display->drawCircle(cx, headY, headWidth / 2 + 12 + (wave > 7), palette.glow);
+    if (pet.genome.mutationGenes & 0x02)
+      display->fillCircle(cx, headY - headHeight / 2 - 15, 8, palette.glow);
+  }
+}
+
 void drawCreature(bool frame, bool asleep) {
   const uint16_t bg = asleep ? RGB565_BLACK : COLOR_BACKGROUND;
   if (pet.stage == 0) {
     drawEgg(frame, bg);
     return;
   }
+  drawProceduralCreature(asleep);
+  return;
 
   const int bob = 0;
   const int cx = 184;
@@ -1528,14 +1814,9 @@ void updateCreatureAnimation() {
     display->setCursor(animationFrame ? 288 : 296, 142);
     display->print("Z");
   } else if (currentPage == PAGE_COMPANION) {
-    if (pet.stage == 0) {
-      // Compose the entire frame in PSRAM. Directly streaming overlapping
-      // primitives to the CO5300 causes visible scanline tearing.
-      presentCoherentPageFrame(PAGE_COMPANION);
-    } else {
-      // Redraw only 2 small eye patches. The body and surrounding UI never flashes.
-      drawFaceFrame(animationFrame);
-    }
+    // Compose the entire frame in PSRAM. Directly streaming overlapping
+    // primitives to the CO5300 causes visible scanline tearing.
+    presentCoherentPageFrame(PAGE_COMPANION);
   }
 }
 
@@ -1822,8 +2103,7 @@ void loop() {
     animationFrame = !animationFrame;
     updateCreatureAnimation();
   } else if (!sleeping && !showingEvolutionDebug &&
-             currentPage == PAGE_COMPANION && pet.stage == 0 &&
-             now - lastAnimation >= 90) {
+             currentPage == PAGE_COMPANION && now - lastAnimation >= 90) {
     lastAnimation = now;
     animationFrame = !animationFrame;
     updateCreatureAnimation();
@@ -1832,17 +2112,6 @@ void loop() {
     lastAnimation = now;
     animationFrame = !animationFrame;
     presentCoherentPageFrame(PAGE_GENOME_LAB);
-  } else if (!sleeping && !showingEvolutionDebug &&
-             currentPage == PAGE_COMPANION) {
-    if (!animationFrame && now >= nextBlink) {
-      animationFrame = true;
-      blinkUntil = now + 105;
-      updateCreatureAnimation();
-    } else if (animationFrame && now >= blinkUntil) {
-      animationFrame = false;
-      nextBlink = now + 2600 + random(2200);
-      updateCreatureAnimation();
-    }
   }
 
   if (newEggConfirmation && now >= newEggConfirmationUntil) {
