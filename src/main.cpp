@@ -130,8 +130,10 @@ char playerIdHex[65]{};
 uint64_t playerIdTimestamp = 0;
 bool showingPlayerId = false;
 bool showingUpdate = false;
+bool showingEvolutionDebug = false;
 bool newEggConfirmation = false;
 uint32_t newEggConfirmationUntil = 0;
+uint32_t touchStartedAt = 0;
 
 struct NetworkConfig {
   char ssid[65];
@@ -1258,6 +1260,52 @@ void presentUpdatePage(const char *status, int progress) {
   }
 }
 
+void drawEvolutionDebugPage() {
+  display->fillScreen(COLOR_BACKGROUND);
+  drawCentered("EVOLUTION DEBUG", 24, 3, COLOR_WARNING);
+  drawCentered("DEVELOPMENT CONTROL", 61, 1, COLOR_MUTED);
+  display->fillRoundRect(24, 96, 320, 174, 24, COLOR_CARD);
+  display->drawRoundRect(31, 103, 306, 160, 19, COLOR_PURPLE);
+  drawCentered("CURRENT FORM", 122, 1, COLOR_CYAN);
+  drawCentered(STAGE_NAMES[pet.stage], 148, 3, COLOR_TEXT);
+  drawCentered(pet.stage < 4 ? "NEXT EXPRESSION" : "FINAL EXPRESSION", 198, 1,
+               COLOR_CYAN);
+  drawCentered(pet.stage < 4 ? STAGE_NAMES[pet.stage + 1] : "MAXIMUM STAGE",
+               222, 2, pet.stage < 4 ? COLOR_MINT : COLOR_WARNING);
+
+  display->fillRoundRect(48, 296, 272, 58, 16,
+                         pet.stage < 4 ? COLOR_DANGER : COLOR_MUTED);
+  drawCentered(pet.stage < 4 ? "ADVANCE STAGE" : "MAX STAGE", 316, 2,
+               COLOR_TEXT);
+  display->fillRoundRect(92, 375, 184, 47, 14, COLOR_CARD);
+  display->drawRoundRect(92, 375, 184, 47, 14, COLOR_CYAN);
+  drawCentered("CANCEL", 391, 2, COLOR_TEXT);
+}
+
+void presentEvolutionDebugPage() {
+  if (transitionsReady) {
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasA;
+    drawEvolutionDebugPage();
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(),
+                              LCD_WIDTH, LCD_HEIGHT);
+  } else {
+    drawEvolutionDebugPage();
+  }
+}
+
+void debugAdvanceEvolution() {
+  if (pet.stage >= 4) return;
+  pet.stage++;
+  savePet();
+  snprintf(message, sizeof(message), "Debug form: %s", STAGE_NAMES[pet.stage]);
+  playTone(440, 60, 40);
+  playTone(659, 70, 45);
+  playTone(880, 110, 50);
+  Serial.printf("Evolution Debug: advanced to %s\n", STAGE_NAMES[pet.stage]);
+}
+
 void drawBattleHp(int16_t x, int16_t y, uint16_t hp, uint16_t maxHp,
                   uint16_t color) {
   display->drawRoundRect(x, y, 144, 17, 7, COLOR_MUTED);
@@ -1418,7 +1466,7 @@ void updateClockDisplay() {
   } else {
     snprintf(clockText, sizeof(clockText), "%02d:%02d", rtcTime.tm_hour, rtcTime.tm_min);
   }
-  if (!sleeping && currentPage == PAGE_COMPANION) {
+  if (!sleeping && currentPage == PAGE_COMPANION && !showingEvolutionDebug) {
     display->fillRect(284, 42, 68, 22, COLOR_BACKGROUND);
     display->setTextSize(2);
     display->setTextColor(clockValid ? COLOR_TEXT : COLOR_MUTED);
@@ -1576,6 +1624,7 @@ void enterSleep() {
   playTone(523, 80);
   playTone(392, 120);
   sleeping = true;
+  showingEvolutionDebug = false;
   screenOff = false;
   sleepStarted = millis();
   animationFrame = false;
@@ -1772,7 +1821,8 @@ void loop() {
     lastAnimation = now;
     animationFrame = !animationFrame;
     updateCreatureAnimation();
-  } else if (!sleeping && currentPage == PAGE_COMPANION && pet.stage == 0 &&
+  } else if (!sleeping && !showingEvolutionDebug &&
+             currentPage == PAGE_COMPANION && pet.stage == 0 &&
              now - lastAnimation >= 90) {
     lastAnimation = now;
     animationFrame = !animationFrame;
@@ -1782,7 +1832,8 @@ void loop() {
     lastAnimation = now;
     animationFrame = !animationFrame;
     presentCoherentPageFrame(PAGE_GENOME_LAB);
-  } else if (!sleeping && currentPage == PAGE_COMPANION) {
+  } else if (!sleeping && !showingEvolutionDebug &&
+             currentPage == PAGE_COMPANION) {
     if (!animationFrame && now >= nextBlink) {
       animationFrame = true;
       blinkUntil = now + 105;
@@ -1812,6 +1863,7 @@ void loop() {
 
     if (!touchWasDown) {
       touchWasDown = true;
+      touchStartedAt = now;
       if (sleeping) {
         touchStartX = touchStartY = -1;
         if (settings.wakeMode == 0) wakeUp();
@@ -1829,6 +1881,29 @@ void loop() {
     if (touchStartX >= 0) {
       const int32_t deltaX = touchLastX - touchStartX;
       const int32_t deltaY = touchLastY - touchStartY;
+      const uint32_t touchDuration = now - touchStartedAt;
+      if (showingEvolutionDebug) {
+        if (touchLastY >= 285 && touchLastY < 365 && pet.stage < 4) {
+          debugAdvanceEvolution();
+          showingEvolutionDebug = false;
+          presentCoherentPageFrame(PAGE_COMPANION);
+        } else if (touchLastY >= 365) {
+          showingEvolutionDebug = false;
+          presentCoherentPageFrame(PAGE_COMPANION);
+        }
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
+      if (currentPage == PAGE_COMPANION && touchDuration >= 900 &&
+          abs(deltaX) < 30 && abs(deltaY) < 30 &&
+          touchStartX >= 105 && touchStartX <= 263 &&
+          touchStartY >= 125 && touchStartY <= 305) {
+        showingEvolutionDebug = true;
+        playTone(262, 80, 35);
+        presentEvolutionDebugPage();
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       if (showingPlayerId || showingUpdate) {
         showingPlayerId = false;
         showingUpdate = false;
