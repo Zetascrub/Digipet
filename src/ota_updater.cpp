@@ -8,6 +8,7 @@
 #include <mbedtls/pk.h>
 #include <mbedtls/sha256.h>
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #ifndef DIGIPET_VERSION
@@ -138,6 +139,9 @@ bool hexDigest(const char *hex, uint8_t output[32]) {
 OtaResult downloadAndInstall(const char *url, size_t expectedSize,
                              const uint8_t expectedSha[32],
                              const OtaStatusCallback &status) {
+  Serial.printf("OTA: download start, size=%u, free heap=%u, stack=%u\n",
+                static_cast<unsigned>(expectedSize), ESP.getFreeHeap(),
+                static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   NetworkClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -145,12 +149,26 @@ OtaResult downloadAndInstall(const char *url, size_t expectedSize,
   http.setRedirectLimit(5);
   http.setConnectTimeout(10000);
   http.setTimeout(15000);
-  if (!http.begin(client, url) || http.GET() != HTTP_CODE_OK) {
+  if (!http.begin(client, url)) {
+    Serial.println("OTA: HTTP begin failed");
+    return OtaResult::DownloadFailed;
+  }
+  const int responseCode = http.GET();
+  Serial.printf("OTA: firmware HTTP=%d, declared=%d, free heap=%u, stack=%u\n",
+                responseCode, http.getSize(), ESP.getFreeHeap(),
+                static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  if (responseCode != HTTP_CODE_OK) {
     http.end();
     return OtaResult::DownloadFailed;
   }
-  if (expectedSize == 0 || http.getSize() != static_cast<int>(expectedSize) ||
-      !Update.begin(expectedSize, U_FLASH)) {
+  if (expectedSize == 0 || http.getSize() != static_cast<int>(expectedSize)) {
+    Serial.println("OTA: invalid firmware size");
+    http.end();
+    return OtaResult::InstallFailed;
+  }
+  if (!Update.begin(expectedSize, U_FLASH)) {
+    Serial.printf("OTA: Update.begin failed, error=%u (%s)\n",
+                  Update.getError(), Update.errorString());
     http.end();
     return OtaResult::InstallFailed;
   }
@@ -159,7 +177,16 @@ OtaResult downloadAndInstall(const char *url, size_t expectedSize,
   mbedtls_sha256_init(&sha);
   mbedtls_sha256_starts(&sha, 0);
   NetworkClient *stream = http.getStreamPtr();
-  uint8_t buffer[4096];
+  // Keep the transfer buffer off the loop task's small stack. TLS, HTTP,
+  // hashing, and UI rendering are all active in this call chain.
+  std::unique_ptr<uint8_t[]> buffer(new (std::nothrow) uint8_t[4096]);
+  if (!buffer) {
+    Serial.println("OTA: transfer buffer allocation failed");
+    Update.abort();
+    mbedtls_sha256_free(&sha);
+    http.end();
+    return OtaResult::InstallFailed;
+  }
   size_t received = 0;
   int lastProgress = -1;
   uint32_t lastData = millis();
@@ -167,15 +194,18 @@ OtaResult downloadAndInstall(const char *url, size_t expectedSize,
     const size_t available = stream->available();
     if (available) {
       const size_t wanted = std::min(available,
-          std::min(sizeof(buffer), expectedSize - received));
-      const size_t count = stream->readBytes(buffer, wanted);
-      if (!count || Update.write(buffer, count) != count) {
+          std::min(static_cast<size_t>(4096), expectedSize - received));
+      const size_t count = stream->readBytes(buffer.get(), wanted);
+      if (!count || Update.write(buffer.get(), count) != count) {
+        Serial.printf("OTA: write failed at %u, error=%u (%s)\n",
+                      static_cast<unsigned>(received), Update.getError(),
+                      Update.errorString());
         Update.abort();
         mbedtls_sha256_free(&sha);
         http.end();
         return OtaResult::InstallFailed;
       }
-      mbedtls_sha256_update(&sha, buffer, count);
+      mbedtls_sha256_update(&sha, buffer.get(), count);
       received += count;
       lastData = millis();
       const int progress = 20 + static_cast<int>(received * 75 / expectedSize);
@@ -197,13 +227,18 @@ OtaResult downloadAndInstall(const char *url, size_t expectedSize,
   mbedtls_sha256_free(&sha);
   http.end();
   if (received != expectedSize || memcmp(actualSha, expectedSha, 32) != 0) {
+    Serial.printf("OTA: hash/length rejected, received=%u\n",
+                  static_cast<unsigned>(received));
     Update.abort();
     return OtaResult::ImageInvalid;
   }
   if (!Update.end(false) || !Update.isFinished()) {
+    Serial.printf("OTA: Update.end failed, error=%u (%s)\n",
+                  Update.getError(), Update.errorString());
     Update.abort();
     return OtaResult::InstallFailed;
   }
+  Serial.println("OTA: image verified and activated");
   status("UPDATE VERIFIED // REBOOTING", 100);
   delay(1200);
   ESP.restart();

@@ -17,6 +17,7 @@
 #include "pin_config.h"
 #include "familiar_battle_service.h"
 #include "ota_updater.h"
+#include <esp_system.h>
 
 struct PetState {
   uint32_t magic;
@@ -1444,7 +1445,9 @@ void handleBattleTap(int16_t x, int16_t y) {
 
 void setup() {
   Serial.begin(115200);
+  delay(100);
   Serial.printf("Digipet firmware v%s\n", DIGIPET_VERSION);
+  Serial.printf("Reset reason: %d\n", static_cast<int>(esp_reset_reason()));
   Wire.begin(IIC_SDA, IIC_SCL);
   preferences.begin("digipet", false);
   loadSettings();
