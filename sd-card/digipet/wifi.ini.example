@@ -1,0 +1,8 @@
+# Rename this file to wifi.ini when copying the digipet folder to the SD card.
+# Never commit real credentials.
+
+ssid=YOUR_WIFI_NAME
+password=YOUR_WIFI_PASSWORD
+timezone=Europe/London
+ntp=pool.ntp.org
+sync_on_boot=true

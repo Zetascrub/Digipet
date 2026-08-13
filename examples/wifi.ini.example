@@ -1,8 +1,0 @@
-# Copy this file to /digipet/wifi.ini on the microSD card.
-# Never commit real credentials to this repository.
-
-ssid=YOUR_WIFI_NAME
-password=YOUR_WIFI_PASSWORD
-timezone=Europe/London
-ntp=pool.ntp.org
-sync_on_boot=true

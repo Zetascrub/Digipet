@@ -54,8 +54,9 @@ drivers that are not fully represented by the generic PlatformIO board target.
 
 ## Optional Wi-Fi and time setup
 
-Copy [`examples/wifi.ini.example`](examples/wifi.ini.example) to
-`/digipet/wifi.ini` on a microSD card and replace the placeholders locally.
+Copy the example tree under [`sd-card`](sd-card) to the microSD card, rename
+`digipet/wifi.ini.example` to `digipet/wifi.ini`, and replace the placeholders
+locally.
 
 The device reads the file during boot, connects long enough to synchronise its
 clock, then disables Wi-Fi. Failure to mount the card, connect, or sync does not
@@ -83,8 +84,17 @@ src/                 Digipet firmware and battle service
 lib/                 Vendored Waveshare-compatible device libraries
 examples/            Credential-free configuration examples
 share/vpet-battle/   Reusable battle service handoff package
+sd-card/             Credential-free SD-card layout example
+release/             Public firmware verification material
+scripts/             Release-manifest tooling
 platformio.ini       PlatformIO build configuration
 ```
+
+## Signed releases
+
+Tagged releases are built and signed by GitHub Actions. See
+[`RELEASES.md`](RELEASES.md) for key custody, release creation, asset formats,
+and the security rules planned for the self-updater.
 
 ## License
 

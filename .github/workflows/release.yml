@@ -1,0 +1,72 @@
+name: Signed firmware release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: python -m pip install --disable-pip-version-check platformio
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Prepare release assets
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          cp .pio/build/waveshare_amoled_v2/firmware.bin dist/digipet-firmware.bin
+          cp .pio/build/waveshare_amoled_v2/firmware.factory.bin dist/digipet-factory.bin
+          python scripts/create_release_manifest.py \
+            --firmware dist/digipet-firmware.bin \
+            --factory dist/digipet-factory.bin \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output dist/digipet-manifest.json
+
+      - name: Sign and verify manifest
+        env:
+          SIGNING_KEY_B64: ${{ secrets.FIRMWARE_SIGNING_KEY_B64 }}
+        run: |
+          test -n "$SIGNING_KEY_B64"
+          printf '%s' "$SIGNING_KEY_B64" | base64 --decode > "$RUNNER_TEMP/signing-key.pem"
+          chmod 600 "$RUNNER_TEMP/signing-key.pem"
+          openssl dgst -sha256 \
+            -sign "$RUNNER_TEMP/signing-key.pem" \
+            -out dist/digipet-manifest.sig \
+            dist/digipet-manifest.json
+          openssl dgst -sha256 \
+            -verify release/firmware-signing-public.pem \
+            -signature dist/digipet-manifest.sig \
+            dist/digipet-manifest.json
+
+      - name: Attest firmware provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/digipet-firmware.bin
+            dist/digipet-factory.bin
+            dist/digipet-manifest.json
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
