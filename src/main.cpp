@@ -151,6 +151,7 @@ enum Page : uint8_t {
   PAGE_SETTINGS,
   PAGE_GENOME_LAB,
 };
+void presentCoherentPageFrame(Page page);
 Page currentPage = PAGE_COMPANION;
 FamiliarBattleState lastBattleState = FamiliarBattleState::Idle;
 uint16_t lastBattleTurn = 0;
@@ -772,11 +773,11 @@ void drawEgg(bool frame, uint16_t bg) {
   display->fillEllipse(184, y, 62, 79, COLOR_TEXT);
   display->fillEllipse(184, y, 58, 75, palette.primaryDark);
   display->fillEllipse(188, y - 3, 53, 70, palette.primary);
-  display->fillEllipse(194, y - 11, 43, 57, palette.primaryLight);
-  display->fillEllipse(201, y - 22, 27, 37, palette.primary);
+  display->fillEllipse(194, y - 11, 43, 57, palette.primary);
+  display->fillEllipse(201, y - 22, 27, 37, palette.primaryLight);
   display->fillEllipse(169, y + 19, 18, 42, palette.secondary);
-  display->fillEllipse(203, y - 31, 12, 21, palette.primaryLight);
-  display->fillEllipse(207, y - 37, 5, 9, RGB565_WHITE);
+  display->fillEllipse(202, y - 31, 9, 17, palette.primaryLight);
+  display->fillEllipse(205, y - 36, 3, 6, COLOR_TEXT);
 
   // Each lineage owns a visual language; genes vary placement and palette.
   switch (lineage) {
@@ -1347,6 +1348,16 @@ void renderPageToCanvas(Page page, Arduino_Canvas &canvas) {
   display = previousDisplay;
 }
 
+void presentCoherentPageFrame(Page page) {
+  if (!transitionsReady) {
+    drawHome();
+    return;
+  }
+  renderPageToCanvas(page, pageCanvasA);
+  panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(),
+                            LCD_WIDTH, LCD_HEIGHT);
+}
+
 void presentBattlePage() {
   if (transitionsReady) {
     renderPageToCanvas(PAGE_BATTLE, pageCanvasA);
@@ -1470,10 +1481,9 @@ void updateCreatureAnimation() {
     display->print("Z");
   } else if (currentPage == PAGE_COMPANION) {
     if (pet.stage == 0) {
-      // Animate only the companion viewport; the surrounding interface remains
-      // untouched and the canvas-sized screen never flashes.
-      display->fillRect(105, 125, 158, 180, COLOR_BACKGROUND);
-      drawEgg(animationFrame, COLOR_BACKGROUND);
+      // Compose the entire frame in PSRAM. Directly streaming overlapping
+      // primitives to the CO5300 causes visible scanline tearing.
+      presentCoherentPageFrame(PAGE_COMPANION);
     } else {
       // Redraw only 2 small eye patches. The body and surrounding UI never flashes.
       drawFaceFrame(animationFrame);
@@ -1771,8 +1781,7 @@ void loop() {
              now - lastAnimation >= 90) {
     lastAnimation = now;
     animationFrame = !animationFrame;
-    display->fillRect(105, 125, 158, 180, COLOR_BACKGROUND);
-    drawEgg(animationFrame, COLOR_BACKGROUND);
+    presentCoherentPageFrame(PAGE_GENOME_LAB);
   } else if (!sleeping && currentPage == PAGE_COMPANION) {
     if (!animationFrame && now >= nextBlink) {
       animationFrame = true;
