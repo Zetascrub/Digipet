@@ -44,13 +44,14 @@ key rotation support should therefore be added before broad deployment.
 After pushing `main`, create and push a signed or annotated version tag:
 
 ```bash
-git tag -s v0.1.0 -m "Digipet v0.1.0"
+git tag -a v0.1.0 -m "Digipet v0.1.0"
 git push origin main v0.1.0
 ```
 
 The tag triggers `.github/workflows/release.yml`. The workflow refuses to
 publish if the signing secret is missing or if verification with the committed
-public key fails.
+public key fails. Maintainers with a configured Git signing identity may use
+`git tag -s` instead; Git tag signing and firmware-manifest signing are separate.
 
 ## OTA client rules
 
