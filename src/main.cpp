@@ -17,7 +17,7 @@
 #include "pin_config.h"
 #include "familiar_battle_service.h"
 #include "ota_updater.h"
-#include <esp_system.h>
+#include "pet_genome.h"
 
 struct PetState {
   uint32_t magic;
@@ -30,10 +30,12 @@ struct PetState {
   uint8_t stage;
   uint8_t training;
   uint8_t reserved[2];
+  PetGenome genome;
 };
 
 constexpr uint32_t PET_MAGIC_V1 = 0x44504731;
-constexpr uint32_t PET_MAGIC = 0x44504732;
+constexpr uint32_t PET_MAGIC_V2 = 0x44504732;
+constexpr uint32_t PET_MAGIC = 0x44504733;
 constexpr uint32_t ANIMATION_MS = 650;
 constexpr uint32_t SETTINGS_MAGIC = 0x44505331;
 
@@ -528,24 +530,50 @@ void loadPet() {
   const size_t storedSize = preferences.getBytesLength("state");
   if (storedSize == sizeof(pet)) {
     preferences.getBytes("state", &pet, sizeof(pet));
-  } else if (storedSize >= 20) {
+  } else if (storedSize > 0) {
+    struct StateV2 {
+      uint32_t magic;
+      uint32_t ageMinutes;
+      uint32_t actions;
+      uint8_t food;
+      uint8_t joy;
+      uint8_t energy;
+      uint8_t health;
+      uint8_t stage;
+      uint8_t training;
+      uint8_t reserved[2];
+    } previous{};
     struct OldState {
       uint32_t magic, ageMinutes, actions;
       uint8_t food, joy, energy, health;
     } old{};
-    preferences.getBytes("state", &old, sizeof(old));
+    if (storedSize == sizeof(previous)) {
+      preferences.getBytes("state", &previous, sizeof(previous));
+    }
+    if (previous.magic == PET_MAGIC_V2) {
+      pet = {PET_MAGIC, previous.ageMinutes, previous.actions, previous.food,
+             previous.joy, previous.energy, previous.health, previous.stage,
+             previous.training, {previous.reserved[0], previous.reserved[1]},
+             generatePetGenome()};
+      Serial.println("Pet: existing companion received a persistent genome");
+    } else if (storedSize >= sizeof(old)) {
+      preferences.getBytes("state", &old, sizeof(old));
+    }
     if (old.magic == PET_MAGIC_V1) {
       pet = {PET_MAGIC, old.ageMinutes, old.actions, old.food, old.joy,
-             old.energy, old.health, 1, 0, {0, 0}};
+             old.energy, old.health, 1, 0, {0, 0}, generatePetGenome()};
     }
   }
   if (pet.magic != PET_MAGIC) {
-    pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {0, 0}};
+    pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {0, 0},
+           generatePetGenome()};
+    Serial.printf("Pet: new %s selected (%s affinity)\n",
+                  eggLineageName(pet.genome.lineage),
+                  elementName(pet.genome.element));
   }
   // Battle-system bring-up profile. reserved[0] is the pet's level until
   // the persistent progression schema lands.
   pet.reserved[0] = 5;
-  if (pet.stage < 2) pet.stage = 2;
   savePet();
 }
 
@@ -716,20 +744,128 @@ void drawButton(const char *label, int16_t x) {
 }
 
 void drawEgg(bool frame, uint16_t bg) {
-  const int y = frame ? 196 : 200;
-  display->fillEllipse(184, y + 42, 68, 12, COLOR_CARD);
-  display->fillEllipse(184, y, 55, 70, COLOR_TEXT);
-  display->fillEllipse(184, y, 49, 64, COLOR_MINT);
-  // Blocky shell markings give the egg a deliberate digital identity.
-  display->fillRect(153, y - 28, 14, 14, COLOR_PURPLE);
-  display->fillRect(202, y - 17, 15, 15, COLOR_CYAN);
-  display->fillRect(165, y + 14, 17, 17, COLOR_CYAN);
-  display->fillRect(199, y + 33, 12, 12, COLOR_PURPLE);
-  display->fillRect(145, y + 28, 9, 9, bg);
-  display->drawRect(149, y - 32, 22, 22, COLOR_TEXT);
-  if (frame) {
-    display->drawLine(137, y - 37, 124, y - 48, COLOR_CYAN);
-    display->drawLine(231, y - 37, 244, y - 48, COLOR_CYAN);
+  const PetPalette palette = paletteForGenome(pet.genome);
+  const uint8_t lineage = pet.genome.lineage % 10;
+  const uint8_t phase = (millis() / 90) % 32;
+  const int y = 218 + ((phase < 16 ? phase : 31 - phase) / 8);
+
+  // A compact aura and contact shadow establish depth without redrawing the UI.
+  for (uint8_t i = 0; i < 6; ++i) {
+    const int angleIndex = (phase + i * 5) & 31;
+    const int px = 184 + ((angleIndex < 16 ? angleIndex : 31 - angleIndex) - 8) * 8;
+    const int py = y - 8 + ((phase * 7 + i * 19) % 126) - 63;
+    display->fillCircle(px, py, i & 1 ? 2 : 3,
+                        i & 1 ? palette.glow : palette.accent);
+  }
+  display->fillEllipse(184, y + 67, 72, 13, COLOR_CARD);
+  display->fillEllipse(184, y + 65, 56, 7, palette.primaryDark);
+
+  // Offset nested shells produce a shaded, rounded volume on the AMOLED.
+  display->fillEllipse(184, y, 62, 79, COLOR_TEXT);
+  display->fillEllipse(184, y, 58, 75, palette.primaryDark);
+  display->fillEllipse(188, y - 3, 53, 70, palette.primary);
+  display->fillEllipse(194, y - 11, 43, 57, palette.primaryLight);
+  display->fillEllipse(201, y - 22, 27, 37, palette.primary);
+  display->fillEllipse(169, y + 19, 18, 42, palette.secondary);
+  display->fillEllipse(203, y - 31, 12, 21, palette.primaryLight);
+  display->fillEllipse(207, y - 37, 5, 9, RGB565_WHITE);
+
+  // Each lineage owns a visual language; genes vary placement and palette.
+  switch (lineage) {
+    case 0: {  // Ember: animated molten fractures.
+      display->drawLine(171, y - 55, 183, y - 29, palette.glow);
+      display->drawLine(183, y - 29, 173, y - 5, palette.glow);
+      display->drawLine(173, y - 5, 188, y + 22, palette.accent);
+      display->drawLine(188, y + 22, 180, y + 48, palette.glow);
+      display->fillCircle(183, y - 29, frame ? 5 : 3, palette.accent);
+      break;
+    }
+    case 1:  // Tidal: layered wave bands and bubbles.
+      for (int row = -30; row <= 34; row += 18) {
+        display->drawLine(151, y + row, 166, y + row - 5, palette.accent);
+        display->drawLine(166, y + row - 5, 184, y + row + 2, palette.accent);
+        display->drawLine(184, y + row + 2, 210, y + row - 4, palette.accent);
+      }
+      display->drawCircle(204, y + 30 - phase / 3, 5, palette.glow);
+      display->drawCircle(164, y - 18 - phase / 4, 3, palette.glow);
+      break;
+    case 2:  // Verdant: branching leaf veins.
+      display->drawLine(184, y + 53, 184, y - 48, palette.accent);
+      for (int branch = -34; branch <= 34; branch += 17) {
+        display->drawLine(184, y + branch, 158, y + branch - 14, palette.secondary);
+        display->drawLine(184, y + branch - 7, 211, y + branch - 23, palette.accent);
+      }
+      display->fillTriangle(177, y - 65, 184, y - 82, 190, y - 62, palette.glow);
+      break;
+    case 3:  // Volt: angular circuit paths.
+      display->drawLine(158, y - 42, 181, y - 42, palette.accent);
+      display->drawLine(181, y - 42, 171, y - 15, palette.accent);
+      display->drawLine(171, y - 15, 197, y - 15, palette.glow);
+      display->drawLine(197, y - 15, 185, y + 17, palette.glow);
+      display->drawLine(185, y + 17, 210, y + 17, palette.accent);
+      for (int i = 0; i < 4; ++i)
+        display->fillCircle(158 + i * 17, y + 42 - (i & 1) * 10, 3,
+                            (phase + i) & 2 ? palette.glow : palette.accent);
+      break;
+    case 4:  // Umbral: iris-like sigil with an orbiting glint.
+      display->fillEllipse(184, y + 1, 31, 19, palette.secondary);
+      display->fillEllipse(184, y + 1, 20, 14, palette.accent);
+      display->fillEllipse(184, y + 1, 8, 14, palette.primaryDark);
+      display->fillCircle(188, y - 4, 3, palette.glow);
+      display->drawCircle(184, y + 1, 37 + (frame ? 2 : 0), palette.glow);
+      break;
+    case 5:  // Digital: asymmetric data blocks and traces.
+      for (uint8_t i = 0; i < 9; ++i) {
+        const int bx = 151 + ((pet.genome.seed[0] >> (i * 3 % 24)) & 0x2F);
+        const int by = y - 49 + ((pet.genome.seed[1] >> (i * 3 % 24)) & 0x5F);
+        display->fillRect(bx, by, 5 + (i & 3) * 2, 5,
+                          i & 1 ? palette.accent : palette.secondary);
+      }
+      display->drawRect(169, y - 25, 31, 46, palette.glow);
+      display->fillRect(178, y - 16 + phase / 4, 13, 4, RGB565_WHITE);
+      break;
+    case 6:  // Crystal: luminous facets.
+      display->fillTriangle(184, y - 59, 157, y - 4, 184, y + 9, palette.secondary);
+      display->fillTriangle(184, y - 59, 214, y - 7, 184, y + 9, palette.accent);
+      display->fillTriangle(157, y - 4, 184, y + 9, 166, y + 49, palette.primaryDark);
+      display->fillTriangle(214, y - 7, 184, y + 9, 204, y + 46, palette.glow);
+      display->drawLine(184, y - 59, 184, y + 55, RGB565_WHITE);
+      break;
+    case 7:  // Alloy: segmented armour shell.
+      display->drawLine(145, y - 25, 223, y - 25, palette.accent);
+      display->drawLine(135, y + 8, 232, y + 8, palette.secondary);
+      display->drawLine(148, y + 40, 218, y + 40, palette.accent);
+      display->drawLine(184, y - 71, 184, y + 62, palette.primaryDark);
+      for (int sy : {-25, 8, 40}) {
+        display->fillCircle(153, y + sy, 4, palette.glow);
+        display->fillCircle(215, y + sy, 4, palette.glow);
+      }
+      break;
+    case 8:  // Celestial: constellation joined across the shell.
+      for (uint8_t i = 0; i < 6; ++i) {
+        const int sx = 157 + ((pet.genome.seed[2] >> (i * 4)) & 0x37);
+        const int sy = y - 47 + ((pet.genome.seed[3] >> (i * 4)) & 0x5F);
+        display->fillCircle(sx, sy, i == (phase / 6) % 6 ? 4 : 2, palette.accent);
+        if (i) {
+          const int px = 157 + ((pet.genome.seed[2] >> ((i - 1) * 4)) & 0x37);
+          const int py = y - 47 + ((pet.genome.seed[3] >> ((i - 1) * 4)) & 0x5F);
+          display->drawLine(px, py, sx, sy, palette.glow);
+        }
+      }
+      break;
+    default:  // Primal: scale plates and a claw glyph.
+      for (int row = -37; row <= 35; row += 18)
+        for (int column = -24; column <= 24; column += 16)
+          display->drawCircle(184 + column + ((row / 18) & 1) * 8,
+                              y + row, 9, palette.secondary);
+      display->drawLine(170, y - 38, 181, y + 32, palette.accent);
+      display->drawLine(184, y - 42, 190, y + 31, palette.accent);
+      display->drawLine(198, y - 35, 198, y + 28, palette.accent);
+      break;
+  }
+
+  if (pet.genome.mutationGenes) {
+    display->drawCircle(184, y, 66 + (frame ? 2 : 0), palette.glow);
   }
 }
 
@@ -867,7 +1003,8 @@ void drawCompanionPage() {
   display->setTextSize(1);
   display->setTextColor(COLOR_CYAN);
   display->setCursor(28, 49);
-  display->print(STAGE_NAMES[pet.stage]);
+  display->print(pet.stage == 0 ? eggLineageName(pet.genome.lineage)
+                                : STAGE_NAMES[pet.stage]);
   display->setTextSize(2);
   display->setTextColor(clockValid ? COLOR_TEXT : COLOR_MUTED);
   display->setCursor(288, 45);
@@ -887,7 +1024,15 @@ void drawCompanionPage() {
 void drawStatusPage() {
   display->fillScreen(COLOR_BACKGROUND);
   drawCentered("COMPANION STATUS", 18, 3, COLOR_MINT);
-  drawCentered(STAGE_NAMES[pet.stage], 49, 1, COLOR_CYAN);
+  char identity[40];
+  if (pet.stage == 0) {
+    snprintf(identity, sizeof(identity), "%s // %s",
+             eggLineageName(pet.genome.lineage), elementName(pet.genome.element));
+  } else {
+    snprintf(identity, sizeof(identity), "%s // %s",
+             STAGE_NAMES[pet.stage], elementName(pet.genome.element));
+  }
+  drawCentered(identity, 49, 1, COLOR_CYAN);
   drawStatRow(ICON_FOOD, pet.food, 82);
   drawStatRow(ICON_JOY, pet.joy, 128);
   drawStatRow(ICON_ENERGY, pet.energy, 174);
@@ -1257,8 +1402,15 @@ void updateCreatureAnimation() {
     display->setCursor(animationFrame ? 288 : 296, 142);
     display->print("Z");
   } else if (currentPage == PAGE_COMPANION) {
-    // Redraw only 2 small eye patches. The body and surrounding UI never flash.
-    drawFaceFrame(animationFrame);
+    if (pet.stage == 0) {
+      // Animate only the companion viewport; the surrounding interface remains
+      // untouched and the canvas-sized screen never flashes.
+      display->fillRect(105, 125, 158, 192, COLOR_BACKGROUND);
+      drawEgg(animationFrame, COLOR_BACKGROUND);
+    } else {
+      // Redraw only 2 small eye patches. The body and surrounding UI never flashes.
+      drawFaceFrame(animationFrame);
+    }
   }
 }
 
@@ -1540,6 +1692,11 @@ void loop() {
   pollBootWake(now);
 
   if (sleeping && !screenOff && now - lastAnimation >= 900) {
+    lastAnimation = now;
+    animationFrame = !animationFrame;
+    updateCreatureAnimation();
+  } else if (!sleeping && currentPage == PAGE_COMPANION && pet.stage == 0 &&
+             now - lastAnimation >= 90) {
     lastAnimation = now;
     animationFrame = !animationFrame;
     updateCreatureAnimation();
