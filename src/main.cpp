@@ -130,6 +130,8 @@ char playerIdHex[65]{};
 uint64_t playerIdTimestamp = 0;
 bool showingPlayerId = false;
 bool showingUpdate = false;
+bool newEggConfirmation = false;
+uint32_t newEggConfirmationUntil = 0;
 
 struct NetworkConfig {
   char ssid[65];
@@ -142,7 +144,13 @@ struct NetworkConfig {
 
 NetworkConfig networkConfig{};
 
-enum Page : uint8_t { PAGE_COMPANION, PAGE_STATUS, PAGE_BATTLE, PAGE_SETTINGS };
+enum Page : uint8_t {
+  PAGE_COMPANION,
+  PAGE_STATUS,
+  PAGE_BATTLE,
+  PAGE_SETTINGS,
+  PAGE_GENOME_LAB,
+};
 Page currentPage = PAGE_COMPANION;
 FamiliarBattleState lastBattleState = FamiliarBattleState::Idle;
 uint16_t lastBattleTurn = 0;
@@ -990,11 +998,14 @@ void drawFaceFrame(bool closed) {
 }
 
 void drawPageDots(Page active) {
-  const int16_t y = active == PAGE_STATUS ? 355 : 425;
-  display->fillCircle(160, y, 4, active == PAGE_COMPANION ? COLOR_MINT : COLOR_CARD);
-  display->fillCircle(176, y, 4, active == PAGE_STATUS ? COLOR_MINT : COLOR_CARD);
-  display->fillCircle(192, y, 4, active == PAGE_BATTLE ? COLOR_MINT : COLOR_CARD);
-  display->fillCircle(208, y, 4, active == PAGE_SETTINGS ? COLOR_MINT : COLOR_CARD);
+  const int16_t y = active == PAGE_STATUS ? 355 :
+                    (active >= PAGE_SETTINGS ? 437 : 425);
+  const Page pages[] = {PAGE_COMPANION, PAGE_STATUS, PAGE_BATTLE,
+                        PAGE_SETTINGS, PAGE_GENOME_LAB};
+  for (uint8_t i = 0; i < 5; ++i) {
+    display->fillCircle(152 + i * 16, y, 4,
+                        active == pages[i] ? COLOR_MINT : COLOR_CARD);
+  }
 }
 
 void drawCompanionPage() {
@@ -1119,6 +1130,60 @@ void drawSettingsPage() {
   display->setCursor(66, 403); display->print("PLAYER ID");
   display->setCursor(233, 403); display->print("UPDATE");
   drawPageDots(PAGE_SETTINGS);
+}
+
+void drawGenomeLabPage() {
+  static const char *bodyNames[] = {"QUADRUPED", "HUMANOID", "AVIAN", "BLOB", "SERPENT"};
+  static const char *temperaments[] = {"CALM", "BOLD", "CURIOUS", "LOYAL", "WILD", "CLEVER"};
+  display->fillScreen(COLOR_BACKGROUND);
+  drawCentered("GENOME LAB", 15, 3, COLOR_MINT);
+  drawCentered("INHERITED EGG SIGNATURE", 48, 1, COLOR_CYAN);
+
+  display->drawRoundRect(20, 74, 328, 244, 28, COLOR_CARD);
+  display->drawRoundRect(27, 81, 314, 230, 23, COLOR_PURPLE);
+  drawEgg(animationFrame, COLOR_BACKGROUND);
+
+  char fingerprint[20];
+  const uint32_t fingerprintValue = pet.genome.seed[0] ^ pet.genome.seed[1] ^
+                                    pet.genome.seed[2] ^ pet.genome.seed[3];
+  snprintf(fingerprint, sizeof(fingerprint), "GENE %08lX",
+           static_cast<unsigned long>(fingerprintValue));
+  display->fillRoundRect(22, 325, 324, 43, 13, COLOR_CARD);
+  display->setTextSize(1);
+  display->setTextColor(COLOR_TEXT);
+  display->setCursor(34, 337);
+  display->printf("%s  //  %s", eggLineageName(pet.genome.lineage),
+                  elementName(pet.genome.element));
+  display->setTextColor(COLOR_MUTED);
+  display->setCursor(34, 352);
+  display->printf("%s  %s  %s", bodyNames[pet.genome.bodyType % 5],
+                  temperaments[pet.genome.temperament % 6], fingerprint);
+
+  const bool confirming = newEggConfirmation && millis() < newEggConfirmationUntil;
+  display->fillRoundRect(48, 378, 272, 49, 15,
+                         confirming ? COLOR_DANGER : COLOR_PURPLE);
+  drawCentered(confirming ? "CONFIRM NEW EGG" : "START NEW EGG", 395, 2,
+               COLOR_TEXT);
+  if (confirming) {
+    drawCentered("REPLACES CURRENT COMPANION", 371, 1, COLOR_WARNING);
+  }
+  drawPageDots(PAGE_GENOME_LAB);
+}
+
+void beginNewEgg() {
+  pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {5, 0},
+         generatePetGenome()};
+  savePet();
+  newEggConfirmation = false;
+  newEggConfirmationUntil = 0;
+  snprintf(message, sizeof(message), "%s signal acquired",
+           eggLineageName(pet.genome.lineage));
+  playTone(392, 70, 40);
+  playTone(523, 70, 45);
+  playTone(784, 130, 50);
+  Serial.printf("Genome Lab: started %s, element=%s\n",
+                eggLineageName(pet.genome.lineage),
+                elementName(pet.genome.element));
 }
 
 void drawPlayerIdPage() {
@@ -1267,7 +1332,8 @@ void drawHome() {
   if (currentPage == PAGE_COMPANION) drawCompanionPage();
   else if (currentPage == PAGE_STATUS) drawStatusPage();
   else if (currentPage == PAGE_BATTLE) drawBattlePage();
-  else drawSettingsPage();
+  else if (currentPage == PAGE_SETTINGS) drawSettingsPage();
+  else drawGenomeLabPage();
 }
 
 void renderPageToCanvas(Page page, Arduino_Canvas &canvas) {
@@ -1276,7 +1342,8 @@ void renderPageToCanvas(Page page, Arduino_Canvas &canvas) {
   if (page == PAGE_COMPANION) drawCompanionPage();
   else if (page == PAGE_STATUS) drawStatusPage();
   else if (page == PAGE_BATTLE) drawBattlePage();
-  else drawSettingsPage();
+  else if (page == PAGE_SETTINGS) drawSettingsPage();
+  else drawGenomeLabPage();
   display = previousDisplay;
 }
 
@@ -1405,7 +1472,7 @@ void updateCreatureAnimation() {
     if (pet.stage == 0) {
       // Animate only the companion viewport; the surrounding interface remains
       // untouched and the canvas-sized screen never flashes.
-      display->fillRect(105, 125, 158, 192, COLOR_BACKGROUND);
+      display->fillRect(105, 125, 158, 180, COLOR_BACKGROUND);
       drawEgg(animationFrame, COLOR_BACKGROUND);
     } else {
       // Redraw only 2 small eye patches. The body and surrounding UI never flashes.
@@ -1700,6 +1767,12 @@ void loop() {
     lastAnimation = now;
     animationFrame = !animationFrame;
     updateCreatureAnimation();
+  } else if (!sleeping && currentPage == PAGE_GENOME_LAB &&
+             now - lastAnimation >= 90) {
+    lastAnimation = now;
+    animationFrame = !animationFrame;
+    display->fillRect(105, 125, 158, 180, COLOR_BACKGROUND);
+    drawEgg(animationFrame, COLOR_BACKGROUND);
   } else if (!sleeping && currentPage == PAGE_COMPANION) {
     if (!animationFrame && now >= nextBlink) {
       animationFrame = true;
@@ -1710,6 +1783,11 @@ void loop() {
       nextBlink = now + 2600 + random(2200);
       updateCreatureAnimation();
     }
+  }
+
+  if (newEggConfirmation && now >= newEggConfirmationUntil) {
+    newEggConfirmation = false;
+    if (currentPage == PAGE_GENOME_LAB) drawHome();
   }
 
   if (now - lastTouchRead < 25) return;
@@ -1758,7 +1836,7 @@ void loop() {
       const bool battleLinkActive = currentPage == PAGE_BATTLE &&
                                     battle.state() != FamiliarBattleState::Idle;
       if (!battleLinkActive && abs(deltaX) > 60 && abs(deltaX) > abs(deltaY)) {
-        if (deltaX < 0 && currentPage < PAGE_SETTINGS) {
+        if (deltaX < 0 && currentPage < PAGE_GENOME_LAB) {
           playTone(988, 30, 35);
           const Page target = static_cast<Page>(currentPage + 1);
           strcpy(message, target == PAGE_STATUS ? "Care console ready" :
@@ -1793,6 +1871,16 @@ void loop() {
           }
         } else {
           changeSetting(touchLastX, touchLastY);
+        }
+      } else if (currentPage == PAGE_GENOME_LAB && touchLastY >= 370) {
+        if (newEggConfirmation && millis() < newEggConfirmationUntil) {
+          beginNewEgg();
+          transitionToPage(PAGE_COMPANION, 1);
+        } else {
+          newEggConfirmation = true;
+          newEggConfirmationUntil = millis() + 6000;
+          playTone(330, 90, 38);
+          drawHome();
         }
       } else if (currentPage == PAGE_BATTLE) {
         handleBattleTap(touchLastX, touchLastY);
