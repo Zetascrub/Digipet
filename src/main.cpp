@@ -165,6 +165,16 @@ PetGenome copiedGenome{};
 bool hasCopiedGenome = false;
 bool battleGenomeCopied = false;
 char genomeTransferStatus[32] = "NO COPIED GENOME";
+// A Find scan's results are shown as a picker instead of auto-connecting to
+// the first one found -- battle.state() stays Idle throughout, so this is
+// tracked separately rather than as another FamiliarBattleState.
+bool showingBattleResults = false;
+uint8_t battleResultsPage = 0;
+constexpr uint8_t kBattleResultsPerPage = 3;
+// Flee needs a second confirming tap so it can't be triggered by a
+// mis-tap during a real match; the arm expires on its own too.
+bool fleeArmed = false;
+uint32_t fleeArmedUntil = 0;
 
 struct NetworkConfig {
   char ssid[65];
@@ -1236,15 +1246,39 @@ const uint16_t STAT_ICONS[4][16] PROGMEM = {
 
 const char *STAT_LABELS[] = {"FOOD", "JOY", "ENERGY", "HEALTH"};
 
-void drawStatIcon(StatIcon icon, int16_t x, int16_t y, uint16_t color) {
+// Shared renderer for any 16x16 1-bit glyph table, drawn 2x for 32x32 icons.
+void drawGlyph16(const uint16_t *rows, int16_t x, int16_t y, uint16_t color) {
   for (uint8_t row = 0; row < 16; row++) {
-    const uint16_t pixels = pgm_read_word(&STAT_ICONS[icon][row]);
+    const uint16_t pixels = pgm_read_word(&rows[row]);
     for (uint8_t column = 0; column < 16; column++) {
       if (pixels & (0x8000 >> column)) {
         display->fillRect(x + column * 2, y + row * 2, 2, 2, color);
       }
     }
   }
+}
+
+void drawStatIcon(StatIcon icon, int16_t x, int16_t y, uint16_t color) {
+  drawGlyph16(STAT_ICONS[icon], x, y, color);
+}
+
+enum BattleMoveIcon : uint8_t { ICON_ATTACK, ICON_DEFEND, ICON_SPECIAL, ICON_FLEE };
+
+// Hand-pixelled to match STAT_ICONS' style: a blade for Attack, a shield
+// outline for Defend, a burst for Special, and an exit arrow for Flee.
+const uint16_t BATTLE_MOVE_ICONS[4][16] PROGMEM = {
+  {0x00E0, 0x0180, 0x0300, 0x0600, 0x0C00, 0x1800, 0x3000, 0x6000,
+   0xC000, 0xFF80, 0x1800, 0x1800, 0x1800, 0x3C00, 0x1800, 0x0000},  // attack
+  {0x0000, 0x3FF0, 0x7FF8, 0xFFFC, 0xFFFC, 0xFFFC, 0xFFFC, 0x7FF8,
+   0x7FF8, 0x3FF0, 0x3FF0, 0x1FE0, 0x0FC0, 0x0780, 0x0300, 0x0000},  // defend
+  {0x0080, 0x0080, 0x01C0, 0x01C0, 0x03E0, 0xC7F1, 0x67F3, 0x3FFE,
+   0x3FFE, 0x67F3, 0xC7F1, 0x03E0, 0x01C0, 0x01C0, 0x0080, 0x0000},  // special
+  {0x0000, 0x07F0, 0x0800, 0x1000, 0x2000, 0x41FE, 0xFF82, 0x4104,
+   0x21FC, 0x1000, 0x0800, 0x07F0, 0x0000, 0x0000, 0x0000, 0x0000},  // flee
+};
+
+void drawBattleMoveIcon(BattleMoveIcon icon, int16_t x, int16_t y, uint16_t color) {
+  drawGlyph16(BATTLE_MOVE_ICONS[icon], x, y, color);
 }
 
 void drawStatRow(StatIcon icon, uint8_t value, int16_t y) {
@@ -1542,6 +1576,25 @@ void drawGenomeFace(const PetPalette &palette, int cx, int cy, int headWidth,
     if (stage >= 3) display->fillTriangle(cx - 5, cy + 24, cx, cy + 31,
                                           cx + 5, cy + 24, COLOR_TEXT);
   }
+}
+
+// A compact head-and-face "portrait" bust, used to give a combatant a face
+// on the battle screen without needing the full per-body-type creature
+// layout at a different scale -- more like a fighter-select badge than the
+// companion page's full creature.
+void drawCreaturePortrait(const PetGenome &genome, uint8_t stage, int cx, int cy,
+                          int headWidth, uint16_t ringColor) {
+  const PetPalette palette = paletteForGenome(genome);
+  const int headHeight = headWidth * 4 / 5;
+  display->fillCircle(cx, cy, headWidth / 2 + 12, scaleRgb565(ringColor, 16));
+  display->drawCircle(cx, cy, headWidth / 2 + 10, ringColor);
+  display->fillEllipse(cx, cy, headWidth / 2 + 4, headHeight / 2 + 4, COLOR_TEXT);
+  display->fillEllipse(cx + 3, cy - 2, headWidth / 2, headHeight / 2, palette.primary);
+  display->fillEllipse(cx + headWidth / 6, cy - headHeight / 6, headWidth / 5,
+                       headHeight / 7, palette.primaryLight);
+  display->fillCircle(cx + headWidth / 6 + 2, cy - headHeight / 6 - 2, 2,
+                      lerpRgb565(palette.primaryLight, RGB565_WHITE, 0.6f));
+  drawGenomeFace(palette, cx, cy, headWidth, false, stage, genome.faceGene);
 }
 
 void drawProceduralCreature(bool asleep) {
@@ -2370,85 +2423,246 @@ void debugAdvanceEvolution() {
   Serial.printf("Evolution Debug: advanced to %s\n", STAGE_NAMES[pet.stage]);
 }
 
-void drawBattleHp(int16_t x, int16_t y, uint16_t hp, uint16_t maxHp,
-                  uint16_t color) {
-  display->drawRoundRect(x, y, 144, 17, 7, COLOR_MUTED);
-  if (hp && maxHp) {
-    display->fillRoundRect(x + 3, y + 3, 138 * hp / maxHp, 11, 5, color);
+// One row of a scanned opponent: stage/level identity plus a 3-bar signal
+// strength readout from RSSI. No creature portrait here -- their genome
+// hasn't been exchanged yet at this point, only their HELLO/advertisement.
+void drawOpponentRow(const FamiliarBattleOpponent &opponent, int16_t y) {
+  drawPanelGlow(24, y, 320, 68, 18, COLOR_CYAN);
+  display->fillRoundRect(24, y, 320, 68, 18, COLOR_CARD);
+  display->drawRoundRect(24, y, 320, 68, 18, COLOR_CYAN);
+  display->setTextSize(2);
+  display->setTextColor(COLOR_TEXT);
+  display->setCursor(44, y + 14);
+  display->print(opponent.stageIndex < 5 ? STAGE_NAMES[opponent.stageIndex] : "UNKNOWN");
+  display->setTextSize(1);
+  display->setTextColor(COLOR_MUTED);
+  display->setCursor(44, y + 42);
+  display->printf("LEVEL %u", opponent.level);
+  const uint8_t bars = opponent.rssi > -60 ? 3 : opponent.rssi > -75 ? 2 : 1;
+  for (uint8_t b = 0; b < 3; ++b) {
+    const int16_t bh = 8 + b * 6;
+    display->fillRect(298 + b * 10, y + 50 - bh, 6, bh,
+                      b < bars ? COLOR_MINT : COLOR_MUTED);
+  }
+}
+
+// The Find picker: a scrollable (swipe up/down) list of scan results instead
+// of auto-connecting to the first one found. Takes the result vector as a
+// parameter rather than reading battle.scanResults() directly so the exact
+// same drawing code can be previewed with synthetic data (DUMPSCAN).
+void drawBattleResultsPage(const std::vector<FamiliarBattleOpponent> &results,
+                           uint8_t page) {
+  paintPageBackdrop();
+  drawCentered("SELECT OPPONENT", 20, 2, COLOR_MINT);
+  const uint8_t totalPages = max<uint8_t>(
+      1, (results.size() + kBattleResultsPerPage - 1) / kBattleResultsPerPage);
+  const uint8_t start = page * kBattleResultsPerPage;
+  for (uint8_t i = 0; i < kBattleResultsPerPage; ++i) {
+    const size_t index = start + i;
+    if (index >= results.size()) break;
+    drawOpponentRow(results[index], 66 + i * 76);
+  }
+  if (totalPages > 1) {
+    char pageLabel[12];
+    snprintf(pageLabel, sizeof(pageLabel), "%u / %u", page + 1, totalPages);
+    drawCentered(pageLabel, 300, 1, COLOR_MUTED);
+    drawCentered("SWIPE FOR MORE", 320, 1, COLOR_MUTED);
+  }
+  display->fillRoundRect(84, 385, 200, 43, 14, COLOR_CARD);
+  display->drawRoundRect(84, 385, 200, 43, 14, COLOR_CYAN);
+  drawCenteredInRect("CANCEL", 84, 385, 200, 43, 2, COLOR_TEXT);
+  drawPageDots(PAGE_BATTLE);
+}
+
+// A small icon-and-glow button, matching the settings tile treatment, used
+// for both the Idle state's HOST/FIND choice and (elsewhere) move buttons.
+void drawBattleButton(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius,
+                      uint16_t color, BattleMoveIcon icon, const char *label) {
+  drawPanelGlow(x, y, w, h, radius, color);
+  display->fillRoundRect(x, y, w, h, radius, color);
+  drawBattleMoveIcon(icon, x + w / 2 - 16, y + 6, COLOR_TEXT);
+  display->setTextSize(1);
+  display->setTextColor(COLOR_TEXT);
+  drawCenteredInRect(label, x, y + h - 20, w, 18, 1, COLOR_TEXT);
+}
+
+// Shared "in battle" layout for both the live Battling/Result states and the
+// DUMPBATTLE debug preview -- takes every value as a parameter rather than
+// reading the live `battle` object, so the exact same drawing code can be
+// exercised with synthetic data for visual verification without a live BLE
+// match (which needs two physical devices to test at all).
+void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
+                        uint16_t opponentMaxHp, uint8_t opponentLevel,
+                        bool enhancedLink, const char *logLine1, const char *logLine2,
+                        bool isResult, bool moveSubmitted, bool fleeArmed,
+                        bool opponentGenomeAvailable, bool genomeCopied,
+                        const PetGenome *opponentGenome) {
+  const PetPalette myPalette = paletteForGenome(pet.genome);
+  drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 90, 96, 62, myPalette.glow);
+  if (opponentGenome) {
+    drawCreaturePortrait(*opponentGenome, 4, 278, 96, 62, COLOR_DANGER);
+  } else {
+    // Opponent genome hasn't finished arriving over BLE yet -- a neutral
+    // placeholder rather than guessing at their creature's appearance.
+    display->fillCircle(278, 96, 43, scaleRgb565(COLOR_DANGER, 16));
+    display->drawCircle(278, 96, 41, COLOR_DANGER);
+    display->fillCircle(278, 96, 35, COLOR_CARD);
+    display->setTextSize(3);
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(270, 80);
+    display->print("?");
+  }
+
+  display->setTextSize(1);
+  display->setTextColor(COLOR_TEXT);
+  display->setCursor(74, 138); display->print("YOU");
+  display->setCursor(240, 138); display->printf("OPP LV%u", opponentLevel);
+
+  auto hpBar = [&](int16_t x, uint16_t hp, uint16_t maxHp, uint16_t color) {
+    display->drawRoundRect(x, 150, 144, 17, 7, COLOR_MUTED);
+    if (hp && maxHp) {
+      const int16_t filled = 138 * hp / maxHp;
+      display->fillRoundRect(x + 3, 153, filled, 11, 5, color);
+      if (filled > 6) {
+        display->fillCircle(x + 3 + filled - 6, 158, 5,
+                            lerpRgb565(color, RGB565_WHITE, 0.35f));
+      }
+    }
+  };
+  const uint16_t myHpColor =
+      myHp * 100 / max<uint16_t>(1, myMaxHp) < 30 ? COLOR_DANGER : COLOR_MINT;
+  const uint16_t oppHpColor =
+      opponentHp * 100 / max<uint16_t>(1, opponentMaxHp) < 30 ? COLOR_WARNING : COLOR_DANGER;
+  hpBar(24, myHp, myMaxHp, myHpColor);
+  hpBar(200, opponentHp, opponentMaxHp, oppHpColor);
+  display->setCursor(24, 172); display->printf("%u / %u", myHp, myMaxHp);
+  display->setCursor(268, 172); display->printf("%u / %u", opponentHp, opponentMaxHp);
+  drawCentered(enhancedLink ? "ENHANCED LINK" : "CORE LINK", 188, 1,
+              enhancedLink ? COLOR_MINT : COLOR_MUTED);
+
+  if (!isResult) {
+    // A compact two-line log ("you did this, they did that") instead of a
+    // big decorative VS panel, freeing up height for a proper 2x2 move
+    // grid -- bigger, easier-to-hit buttons instead of four squeezed into
+    // one row. Text size bumped to 2 for readability; the log messages
+    // themselves (familiar_battle_service.cpp's addLog calls) were shortened
+    // to fit at this size.
+    drawPanelGlow(24, 196, 320, 72, 18, COLOR_PURPLE);
+    display->fillRoundRect(24, 196, 320, 72, 18, COLOR_CARD);
+    display->setTextSize(2);
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(36, 208);
+    display->print(logLine1);
+    display->setTextColor(COLOR_TEXT);
+    display->setCursor(36, 234);
+    display->print(logLine2);
+
+    const char *labels[] = {"ATK", "DEF", "SPEC", fleeArmed ? "CONFIRM?" : "FLEE"};
+    const uint16_t colors[] = {COLOR_DANGER, COLOR_CYAN, COLOR_PURPLE,
+                               fleeArmed ? COLOR_WARNING : COLOR_MUTED};
+    constexpr int16_t colX[] = {24, 194};
+    constexpr int16_t rowY[] = {280, 336};
+    for (uint8_t i = 0; i < 4; ++i) {
+      drawBattleButton(colX[i % 2], rowY[i / 2], 150, 50, 14, colors[i],
+                       static_cast<BattleMoveIcon>(i), labels[i]);
+    }
+    drawCentered(fleeArmed ? "TAP FLEE AGAIN TO CONFIRM" :
+                moveSubmitted ? "WAITING FOR OPPONENT" : "SELECT MOVE", 396, 1,
+                fleeArmed ? COLOR_WARNING :
+                moveSubmitted ? COLOR_WARNING : COLOR_MINT);
+    return;
+  }
+
+  drawPanelGlow(24, 198, 320, 98, 22, COLOR_PURPLE);
+  display->fillRoundRect(24, 198, 320, 98, 22, COLOR_CARD);
+  drawCentered("BATTLE COMPLETE", 224, 3, COLOR_WARNING);
+  drawCentered(logLine2, 278, 1, COLOR_TEXT);
+
+  if (opponentGenomeAvailable) {
+    drawPanelGlow(18, 305, 160, 54, 14, COLOR_PURPLE);
+    drawPanelGlow(190, 305, 160, 54, 14, COLOR_CYAN);
+    display->fillRoundRect(18, 305, 160, 54, 14, COLOR_PURPLE);
+    display->fillRoundRect(190, 305, 160, 54, 14, COLOR_CYAN);
+    drawCenteredInRect(genomeCopied ? "COPIED" : "COPY GENOME", 18, 305, 160, 54, 1,
+                       COLOR_TEXT);
+    drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, COLOR_BACKGROUND);
+  } else {
+    drawCentered("TAP TO RETURN", 330, 2, COLOR_CYAN);
   }
 }
 
 void drawBattlePage() {
+  if (showingBattleResults) {
+    drawBattleResultsPage(battle.scanResults(), battleResultsPage);
+    return;
+  }
+
   paintPageBackdrop();
   drawCentered("LINK BATTLE", 16, 3, COLOR_MINT);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_CYAN);
-  display->setCursor(24, 51);
-  display->printf("LV 5  HP 35  ATK %u  DEF %u",
-                  FamiliarBattleService::deriveAttack(5, pet.stage),
-                  FamiliarBattleService::deriveDefense(5, pet.stage));
 
   const FamiliarBattleState state = battle.state();
+  const bool inBattle = state == FamiliarBattleState::Battling ||
+                        state == FamiliarBattleState::Result;
+  if (!inBattle) {
+    display->setTextSize(1);
+    display->setTextColor(COLOR_CYAN);
+    display->setCursor(24, 51);
+    display->printf("LV 5  HP 35  ATK %u  DEF %u",
+                    FamiliarBattleService::deriveAttack(5, pet.stage),
+                    FamiliarBattleService::deriveDefense(5, pet.stage));
+  }
+
   if (state == FamiliarBattleState::Idle) {
     drawPanelGlow(22, 82, 324, 212, 26, COLOR_CYAN);
     display->fillRoundRect(22, 82, 324, 212, 26, COLOR_CARD);
-    drawCentered("DIRECT CHALLENGE", 106, 2, COLOR_TEXT);
-    drawCentered("CROSS-DEVICE BLE PROTOCOL", 139, 1, COLOR_MUTED);
-    display->fillRoundRect(43, 180, 126, 62, 16, COLOR_PURPLE);
-    display->fillRoundRect(199, 180, 126, 62, 16, COLOR_CYAN);
-    drawCentered("HOST        FIND", 201, 2, COLOR_TEXT);
+    const PetPalette palette = paletteForGenome(pet.genome);
+    drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 128, 60, palette.glow);
+    // Hit-test regions (handleBattleTap) key off this exact 43/199,180 pair
+    // of rects -- kept in place, only restyled.
+    drawBattleButton(43, 180, 126, 62, 16, COLOR_PURPLE, ICON_DEFEND, "HOST");
+    drawBattleButton(199, 180, 126, 62, 16, COLOR_CYAN, ICON_SPECIAL, "FIND");
     drawCentered(battle.status().c_str(), 269, 1, COLOR_WARNING);
     drawCentered("HOST WAITS // FIND SCANS", 326, 1, COLOR_MUTED);
+  } else if (state == FamiliarBattleState::Scanning) {
+    // Effectively unreachable today (beginFind() blocks for its whole scan
+    // window before returning, so the UI never renders mid-scan -- see the
+    // dedicated screen drawn in handleBattleTap instead) but handled here
+    // too rather than silently falling through to the battling layout.
+    const PetPalette palette = paletteForGenome(pet.genome);
+    drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 184, 70, palette.glow);
+    display->drawCircle(184, 184, 82, COLOR_CYAN);
+    drawCentered("SCANNING", 288, 2, COLOR_TEXT);
+    drawCentered(battle.status().c_str(), 320, 1, COLOR_MUTED);
   } else if (state == FamiliarBattleState::Hosting ||
              state == FamiliarBattleState::Connecting) {
-    display->drawCircle(184, 184, 72, COLOR_CYAN);
-    display->drawCircle(184, 184, 51, COLOR_PURPLE);
-    display->fillCircle(184, 184, 15, COLOR_MINT);
+    const PetPalette palette = paletteForGenome(pet.genome);
+    display->drawCircle(184, 184, 72, palette.glow);
+    display->drawCircle(184, 184, 51, palette.secondary);
+    drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 184, 60, palette.glow);
     drawCentered(state == FamiliarBattleState::Hosting ? "SIGNAL OPEN" : "HANDSHAKE",
                  278, 2, COLOR_TEXT);
     drawCentered(battle.status().c_str(), 310, 1, COLOR_MUTED);
     drawCentered("TAP BELOW TO CANCEL", 367, 1, COLOR_WARNING);
   } else {
-    display->setTextSize(2);
-    display->setTextColor(COLOR_TEXT);
-    display->setCursor(24, 79); display->print("YOU");
-    display->setCursor(242, 79); display->printf("OPP LV%u", battle.opponent().level);
-    drawBattleHp(24, 105, battle.myHp(), battle.myMaxHp(), COLOR_MINT);
-    drawBattleHp(200, 105, battle.opponentHp(), battle.opponentMaxHp(), COLOR_DANGER);
-    display->setTextSize(1);
-    display->setCursor(24, 128); display->printf("%u / %u", battle.myHp(), battle.myMaxHp());
-    display->setCursor(268, 128); display->printf("%u / %u", battle.opponentHp(), battle.opponentMaxHp());
-    drawCentered(battle.negotiatedCapabilities() ? "ENHANCED LINK" : "CORE LINK",
-                 145, 1, battle.negotiatedCapabilities() ? COLOR_MINT : COLOR_MUTED);
-    drawPanelGlow(24, 158, 320, 105, 22, COLOR_PURPLE);
-    display->fillRoundRect(24, 158, 320, 105, 22, COLOR_CARD);
-    drawCentered(state == FamiliarBattleState::Result ? "BATTLE COMPLETE" : "VS", 184, 3,
-                 state == FamiliarBattleState::Result ? COLOR_WARNING : COLOR_PURPLE);
+    // The two most recent log lines ("you did this, they did that") rather
+    // than one line under a big decorative VS panel.
     const auto &log = battle.log();
-    const String battleLine = log.empty() ? String("CHOOSE YOUR MOVE")
-                                          : log.back().substring(0, 42);
-    drawCentered(battleLine.c_str(), 238, 1, COLOR_TEXT);
-    if (state == FamiliarBattleState::Battling) {
-      const char *labels[] = {"ATK", "DEF", "SPEC", "FLEE"};
-      const uint16_t colors[] = {COLOR_DANGER, COLOR_CYAN, COLOR_PURPLE, COLOR_MUTED};
-      for (uint8_t i = 0; i < 4; ++i) {
-        display->fillRoundRect(10 + i * 90, 305, 78, 55, 13, colors[i]);
-        display->setTextSize(1); display->setTextColor(COLOR_TEXT);
-        display->setCursor(35 + i * 90, 329); display->print(labels[i]);
-      }
-      drawCentered(battle.myMoveSubmitted() ? "WAITING FOR OPPONENT" : "SELECT MOVE",
-                   378, 1, battle.myMoveSubmitted() ? COLOR_WARNING : COLOR_MINT);
-    } else {
-      if (battle.opponentGenomeCodeAvailable()) {
-        display->fillRoundRect(18, 305, 160, 54, 14, COLOR_PURPLE);
-        display->fillRoundRect(190, 305, 160, 54, 14, COLOR_CYAN);
-        drawCenteredInRect(battleGenomeCopied ? "COPIED" : "COPY GENOME",
-                           18, 305, 160, 54, 1, COLOR_TEXT);
-        drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, COLOR_BACKGROUND);
-      } else {
-        drawCentered("TAP TO RETURN", 330, 2, COLOR_CYAN);
-      }
-    }
+    // Truncated tighter than the old single-line 42 chars now that the log
+    // renders at text size 2 -- the addLog() messages themselves were also
+    // shortened to fit comfortably within this.
+    const String line2 = log.empty() ? String("CHOOSE YOUR MOVE")
+                                     : log.back().substring(0, 24);
+    const String line1 = log.size() >= 2 ? log[log.size() - 2].substring(0, 24) : String("");
+    if (fleeArmed && millis() >= fleeArmedUntil) fleeArmed = false;
+    PetGenome opponentGenome{};
+    const bool haveOpponentGenome = battle.opponentGenomeCodeAvailable() &&
+        decodePetGenome(battle.opponentGenomeCode(), opponentGenome);
+    drawBattlingLayout(battle.myHp(), battle.myMaxHp(), battle.opponentHp(),
+                       battle.opponentMaxHp(), battle.opponent().level,
+                       battle.negotiatedCapabilities(), line1.c_str(), line2.c_str(),
+                       state == FamiliarBattleState::Result, battle.myMoveSubmitted(),
+                       fleeArmed, battle.opponentGenomeCodeAvailable(), battleGenomeCopied,
+                       haveOpponentGenome ? &opponentGenome : nullptr);
   }
   drawPageDots(PAGE_BATTLE);
 }
@@ -2517,7 +2731,7 @@ void serviceSerialDebug() {
       display = previousDisplay;
     }
 
-    Serial.printf("FBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
+    Serial.printf("\nFBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
     Serial.write(reinterpret_cast<uint8_t *>(pageCanvasA.getFramebuffer()),
                  static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t));
     Serial.flush();
@@ -2526,12 +2740,76 @@ void serviceSerialDebug() {
     bootLogCount = savedCount;
     return;
   }
+  if (line.startsWith("DUMPBATTLE")) {
+    // Renders the real drawBattlingLayout() (the same function the live
+    // Battling/Result states call) against synthetic opponent data -- a
+    // live BLE match needs two physical devices to test at all, so this is
+    // the only way to see this layout without one.
+    int phase = 0;
+    sscanf(line.c_str(), "DUMPBATTLE %d", &phase);
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasB;
+    paintPageBackdrop();
+    drawCentered("LINK BATTLE", 16, 3, COLOR_MINT);
+    PetGenome other = pet.genome;
+    other.lineage = (other.lineage + 3) % 10;
+    other.bodyType = (other.bodyType + 2) % 5;
+    if (phase == 1) {
+      drawBattlingLayout(40, 40, 0, 40, 5, true, "", "Opp: fled!", true, false, false,
+                         true, false, &other);
+    } else if (phase == 2) {
+      drawBattlingLayout(0, 40, 40, 40, 5, false, "", "Defeat...", true, false, false,
+                         false, false, nullptr);
+    } else if (phase == 4) {
+      drawBattlingLayout(24, 40, 31, 40, 5, true, "Opp: ATTACK -6 dmg",
+                         "Genome received.", false, true, true, false, false, nullptr);
+    } else if (phase == 3) {
+      drawBattlingLayout(24, 40, 31, 40, 5, true, "Opp: ATTACK -6 dmg",
+                         "Awaiting genome...", false, true, false, false, false, nullptr);
+    } else {
+      drawBattlingLayout(24, 40, 31, 40, 5, true, "Opp: DEFEND",
+                         "You: SPECIAL -9 dmg", false, false, false, false, false, &other);
+    }
+    drawPageDots(PAGE_BATTLE);
+    display = previousDisplay;
+
+    Serial.printf("\nFBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
+    Serial.write(reinterpret_cast<uint8_t *>(pageCanvasB.getFramebuffer()),
+                 static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t));
+    Serial.flush();
+    return;
+  }
+  if (line.startsWith("DUMPSCAN")) {
+    // Preview of the Find picker with synthetic scan results -- a real
+    // scan needs a second physical device advertising to find at all.
+    int page = 0, count = 5;
+    sscanf(line.c_str(), "DUMPSCAN %d %d", &page, &count);
+    std::vector<FamiliarBattleOpponent> results;
+    const int rssiSamples[] = {-52, -68, -80, -58, -74};
+    for (int i = 0; i < count && i < 8; ++i) {
+      FamiliarBattleOpponent fake;
+      fake.stageIndex = (i % 4) + 1;
+      fake.level = 5;
+      fake.rssi = rssiSamples[i % 5];
+      results.push_back(fake);
+    }
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasB;
+    drawBattleResultsPage(results, static_cast<uint8_t>(page));
+    display = previousDisplay;
+
+    Serial.printf("\nFBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
+    Serial.write(reinterpret_cast<uint8_t *>(pageCanvasB.getFramebuffer()),
+                 static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t));
+    Serial.flush();
+    return;
+  }
   if (!line.startsWith("DUMP")) return;
 
   int bodyType = -1, lineage = -1, stage = -1, markingGene = -1, faceGene = -1,
-      featureGenes = -1;
-  sscanf(line.c_str(), "DUMP %d %d %d %d %d %d", &bodyType, &lineage, &stage,
-         &markingGene, &faceGene, &featureGenes);
+      featureGenes = -1, page = -1;
+  sscanf(line.c_str(), "DUMP %d %d %d %d %d %d %d", &bodyType, &lineage, &stage,
+         &markingGene, &faceGene, &featureGenes, &page);
 
   const PetGenome savedGenome = pet.genome;
   const uint8_t savedStage = pet.stage;
@@ -2542,12 +2820,15 @@ void serviceSerialDebug() {
   if (faceGene >= 0) pet.genome.faceGene = static_cast<uint8_t>(faceGene);
   if (featureGenes >= 0) pet.genome.featureGenes = static_cast<uint16_t>(featureGenes);
 
-  renderPageToCanvas(PAGE_COMPANION, pageCanvasB);
+  const Page dumpPage = page == 1 ? PAGE_BATTLE : page == 2 ? PAGE_STATUS :
+                        page == 3 ? PAGE_SETTINGS : page == 4 ? PAGE_GENOME_LAB :
+                                                                PAGE_COMPANION;
+  renderPageToCanvas(dumpPage, pageCanvasB);
 
   pet.genome = savedGenome;
   pet.stage = savedStage;
 
-  Serial.printf("FBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
+  Serial.printf("\nFBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
   Serial.write(reinterpret_cast<uint8_t *>(pageCanvasB.getFramebuffer()),
                static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t));
   Serial.flush();
@@ -2988,27 +3269,105 @@ FamiliarBattleCapabilities battleCapabilities() {
 
 void handleBattleTap(int16_t x, int16_t y) {
   const FamiliarBattleState state = battle.state();
+  if (showingBattleResults) {
+    const auto &results = battle.scanResults();
+    const uint8_t start = battleResultsPage * kBattleResultsPerPage;
+    if (y >= 66 && y < 66 + kBattleResultsPerPage * 76) {
+      const uint8_t row = (y - 66) / 76;
+      const size_t index = start + row;
+      // Rows are 68 tall inside each 76 slot -- a tap in the 8px gap still
+      // resolves to the nearest row, which is fine here.
+      if (index < results.size()) {
+        showingBattleResults = false;
+        playTone(659, 60, 40);
+        // connectTo() blocks through the BLE connect handshake and service
+        // discovery (can take a couple of seconds) -- show feedback first
+        // so the tap doesn't look ignored while that runs.
+        Arduino_GFX *previousDisplay = display;
+        if (transitionsReady) display = &pageCanvasA;
+        paintPageBackdrop();
+        const PetPalette palette = paletteForGenome(pet.genome);
+        drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 170, 70,
+                             palette.glow);
+        drawCentered("CONNECTING...", 260, 2, COLOR_CYAN);
+        drawCentered("ESTABLISHING LINK", 296, 1, COLOR_MUTED);
+        if (transitionsReady) {
+          display = previousDisplay;
+          panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+        }
+        battle.connectTo(index);
+        presentBattlePage();
+      }
+    } else if (y >= 385 && y <= 428) {
+      showingBattleResults = false;
+      playTone(392, 60, 35);
+      presentBattlePage();
+    }
+    return;
+  }
   if (state == FamiliarBattleState::Idle && y >= 165 && y <= 260) {
     const FamiliarBattleCapabilities capabilities = battleCapabilities();
     char genomeCode[PET_GENOME_CODE_LENGTH + 1]{};
     encodePetGenome(pet.genome, genomeCode, sizeof(genomeCode));
     battleGenomeCopied = false;
+    fleeArmed = false;
     if (x < LCD_WIDTH / 2) {
       battle.beginHost(battlePlayerId(), pet.stage, 5, capabilities, genomeCode);
     } else {
-      display->fillScreen(COLOR_BACKGROUND);
-      drawCentered("SCANNING BATTLE LINKS", 185, 2, COLOR_CYAN);
-      drawCentered("4 SECOND SEARCH", 224, 1, COLOR_MUTED);
+      // beginFind() blocks for its whole scan window, so this is a single
+      // static frame rather than an animated one -- still routed through
+      // the canvas so it matches the rest of the app instead of the bare
+      // direct-to-panel draw this used to be.
+      Arduino_GFX *previousDisplay = display;
+      if (transitionsReady) display = &pageCanvasA;
+      paintPageBackdrop();
+      const PetPalette palette = paletteForGenome(pet.genome);
+      drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 170, 70,
+                           palette.glow);
+      drawCentered("SCANNING BATTLE LINKS", 260, 2, COLOR_CYAN);
+      drawCentered("4 SECOND SEARCH", 296, 1, COLOR_MUTED);
+      if (transitionsReady) {
+        display = previousDisplay;
+        panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+      }
       battle.beginFind(battlePlayerId(), pet.stage, 5, capabilities, genomeCode);
-      if (!battle.scanResults().empty()) battle.connectTo(0);
+      // Shows a picker instead of auto-connecting to whatever was found
+      // first -- battleResultsPage was already reset the last time results
+      // were cleared (beginFind()) or a pick was made, so it only needs
+      // resetting here if this is a fresh search.
+      battleResultsPage = 0;
+      showingBattleResults = !battle.scanResults().empty();
     }
     presentBattlePage();
-  } else if (state == FamiliarBattleState::Battling && y >= 292 && y <= 375 &&
+  } else if (state == FamiliarBattleState::Battling && y >= 276 && y <= 382 &&
              !battle.myMoveSubmitted()) {
-    const uint8_t move = min<uint8_t>(3, x / 92);
-    battle.submitMove(static_cast<FamiliarBattleMove>(move));
-    playTone(560 + move * 110, 55, 35);
-    presentBattlePage();
+    // Matches the 2x2 grid in drawBattlingLayout: columns split at the
+    // midpoint, rows split at the gap between the two button rows. Row
+    // index doubled gives [ATK,DEF]/[SPEC,FLEE] = FamiliarBattleMove's own
+    // Attack=0/Defend=1/Special=2/Flee=3 ordering directly.
+    const uint8_t col = x < LCD_WIDTH / 2 ? 0 : 1;
+    const uint8_t row = y < 329 ? 0 : 1;
+    const uint8_t move = row * 2 + col;
+    if (move == static_cast<uint8_t>(FamiliarBattleMove::Flee)) {
+      if (fleeArmed && millis() < fleeArmedUntil) {
+        fleeArmed = false;
+        battle.submitMove(FamiliarBattleMove::Flee);
+        playTone(220, 90, 40);
+        presentBattlePage();
+      } else {
+        // First tap only arms it -- a second tap on Flee within the window
+        // actually flees, so a stray tap can't end the battle by accident.
+        fleeArmed = true;
+        fleeArmedUntil = millis() + 4000;
+        playTone(330, 60, 35);
+        presentBattlePage();
+      }
+    } else {
+      fleeArmed = false;
+      battle.submitMove(static_cast<FamiliarBattleMove>(move));
+      playTone(560 + move * 110, 55, 35);
+      presentBattlePage();
+    }
   } else if (state == FamiliarBattleState::Result) {
     if (battle.opponentGenomeCodeAvailable() && y >= 292 && x < LCD_WIDTH / 2) {
       PetGenome received{};
@@ -3267,8 +3626,26 @@ void loop() {
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
+      if (currentPage == PAGE_BATTLE && showingBattleResults &&
+          abs(deltaY) > 55 && abs(deltaY) > abs(deltaX)) {
+        const uint8_t totalPages = max<uint8_t>(1,
+            (battle.scanResults().size() + kBattleResultsPerPage - 1) /
+                kBattleResultsPerPage);
+        if (deltaY < 0 && battleResultsPage + 1 < totalPages) {
+          ++battleResultsPage;
+          playTone(988, 30, 30);
+          presentBattlePage();
+        } else if (deltaY > 0 && battleResultsPage > 0) {
+          --battleResultsPage;
+          playTone(784, 30, 30);
+          presentBattlePage();
+        }
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       const bool battleLinkActive = currentPage == PAGE_BATTLE &&
-                                    battle.state() != FamiliarBattleState::Idle;
+                                    (battle.state() != FamiliarBattleState::Idle ||
+                                     showingBattleResults);
       if (!battleLinkActive && abs(deltaX) > 60 && abs(deltaX) > abs(deltaY)) {
         if (deltaX < 0 && currentPage < PAGE_GENOME_LAB) {
           playTone(988, 30, 35);

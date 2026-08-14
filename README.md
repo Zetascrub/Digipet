@@ -64,6 +64,11 @@ The device reads the file during boot, connects long enough to synchronise its
 clock, then disables Wi-Fi. Failure to mount the card, connect, or sync does not
 prevent normal offline operation.
 
+Genome Lab can also export the active pet to `digipet/genome.txt` or import
+that file as a copied genome. A credential-free format example is included at
+`sd-card/digipet/genome.txt.example`. Imported genomes can be cloned exactly or
+blended with the active pet when hatching a new egg.
+
 Never commit a populated `wifi.ini`. The `provisioning/` directory is ignored
 for developers who want a local staging area for private device files.
 
