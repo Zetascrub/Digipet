@@ -85,6 +85,15 @@ wire protocol. Optional body, element, speed, special, and move-matchup rules
 are negotiated per battle; peers that implement only HP, attack, and defence
 continue to use the unchanged core rules.
 
+## Testing
+
+`pio run` builds the real firmware; `pio test -e native` runs a separate
+host-native suite covering hardware-independent logic (currently the genome
+codec, blending, and evolution drift in `pet_genome.cpp`) with a stubbed
+`esp_random()` for determinism, defined in `test/native/fakes`. It never
+touches the ESP32 toolchain or NimBLE/Wi-Fi, so it stays fast and needs no
+board. CI (`.github/workflows/build.yml`) runs both on every push and PR.
+
 ## Repository layout
 
 ```text
@@ -96,6 +105,7 @@ share/vpet-battle/   Reusable battle service handoff package
 sd-card/             Credential-free SD-card layout example
 release/             Public firmware verification material
 scripts/             Release-manifest tooling
+test/                Host-native unit tests (env:native)
 platformio.ini       PlatformIO build configuration
 ```
 
