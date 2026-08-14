@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Simulate a second VPet badge for Ghostwire's BLE PvP battle system.
+"""Simulate a second device for the reusable VPet BLE battle system.
 
 Runs the GATT server side of the wire protocol in
-include/familiar_battle_service.h so a real Cardputer can discover this
-script (via its Familiar screen's Tab -> PvP Battle -> Find Opponent) and
+include/familiar_battle_service.h so compatible firmware can discover and
 battle against it. The simulator is always the *responder*, never the
-challenger -- the real badge always connects to it, not the other way
+challenger -- the physical device connects to it, not the other way
 around -- so it only needs BLE peripheral/GATT-server support, never
 scanning or connecting out.
 
@@ -53,16 +52,46 @@ except ImportError:
 
 # Same Nordic UART Service UUID trio the firmware uses (see
 # familiar_battle_service.cpp) -- a de facto industry-wide UUID scheme,
-# safe to reuse directly, not anything Ghostwire- or vendor-specific.
+# safe to reuse directly and not vendor-specific.
 SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 WRITE_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 NOTIFY_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
 MSG_HELLO = 0x01
 MSG_MOVE = 0x02
+MSG_CAPABILITIES = 0x03
+MSG_GENOME_CHUNK = 0x04
+CAPABILITIES_SCHEMA = 1
+
+CAP_BODY_TYPE = 1 << 0
+CAP_ELEMENT = 1 << 1
+CAP_SPEED = 1 << 2
+CAP_SPECIAL = 1 << 3
+CAP_MOVE_MATCHUPS = 1 << 4
 
 ATTACK, DEFEND, SPECIAL, FLEE = range(4)
 MOVE_NAMES = {ATTACK: "Attack", DEFEND: "Defend", SPECIAL: "Special", FLEE: "Flee"}
+
+
+def body_style(body_type: int) -> int:
+    return (0, 1, 2, 1, 2)[body_type % 5]
+
+
+def matchup_percent(attacker: int, defender: int) -> int:
+    if attacker == defender:
+        return 100
+    return 115 if ((attacker, defender) in ((0, 2), (2, 1), (1, 0))) else 90
+
+
+def element_percent(attacker: int, defender: int) -> int:
+    if attacker == defender:
+        return 100
+    beats = (2, 0, 1, 5, 3, 4)
+    if beats[attacker % 6] == defender % 6:
+        return 125
+    if beats[defender % 6] == attacker % 6:
+        return 80
+    return 100
 
 
 def derive_max_hp(level: int) -> int:
@@ -109,7 +138,8 @@ class Battle:
     a HELLO arrives, mirroring how the firmware's FamiliarBattleService
     resets between battles."""
 
-    def __init__(self, player_id: int, stage_index: int, level: int, interactive: bool):
+    def __init__(self, player_id: int, stage_index: int, level: int,
+                 interactive: bool, capabilities: dict[str, int]):
         self.player_id = player_id
         self.stage_index = stage_index
         self.level = level
@@ -118,6 +148,10 @@ class Battle:
         self.attack = derive_attack(level, stage_index)
         self.defense = derive_defense(level, stage_index)
         self.interactive = interactive
+        self.capabilities = capabilities
+        self.opponent_capabilities = {"flags": 0, "body": 0, "element": 0,
+                                      "speed": 0, "special": 0}
+        self.opponent_genome_chunks: dict[int, bytes] = {}
 
         self.opponent_id = 0
         self.opponent_stage = 0
@@ -150,6 +184,36 @@ class Battle:
         return struct.pack(">BIBBHI", MSG_HELLO, self.player_id,
                            self.stage_index, self.level, self.hp, 0)
 
+    def capability_packet(self) -> bytes | None:
+        if not self.capabilities["flags"]:
+            return None
+        return struct.pack(">BBHBBBB", MSG_CAPABILITIES, CAPABILITIES_SCHEMA,
+                           self.capabilities["flags"], self.capabilities["body"],
+                           self.capabilities["element"], self.capabilities["speed"],
+                           self.capabilities["special"])
+
+    def handle_capabilities(self, data: bytes) -> None:
+        if len(data) < 8 or data[1] != CAPABILITIES_SCHEMA:
+            return
+        _, _, flags, body, element, speed, special = struct.unpack(">BBHBBBB", data[:8])
+        if body >= 5:
+            flags &= ~CAP_BODY_TYPE
+        if element >= 6:
+            flags &= ~CAP_ELEMENT
+        self.opponent_capabilities = {"flags": flags, "body": body,
+                                      "element": element, "speed": speed,
+                                      "special": special}
+        active = flags & self.capabilities["flags"]
+        print(f"[battle] Negotiated capabilities: {active:#06x}")
+
+    def handle_genome_chunk(self, data: bytes) -> None:
+        if len(data) != 14 or data[1] >= 5:
+            return
+        self.opponent_genome_chunks[data[1]] = data[2:14]
+        if len(self.opponent_genome_chunks) == 5:
+            code = b"".join(self.opponent_genome_chunks[i] for i in range(5))
+            print(f"[battle] Opponent genome code: {code.decode('ascii', errors='replace')}")
+
     def choose_move(self) -> int:
         if self.interactive:
             while True:
@@ -165,7 +229,13 @@ class Battle:
         # Fixed processing order (lower playerId first) so both sides draw
         # from the shared PRNG in the same sequence -- symmetric with
         # resolveTurnIfReady()'s `myPlayerId_ > opponent_.playerId` swap.
-        if self.player_id > self.opponent_id:
+        active = self.capabilities["flags"] & self.opponent_capabilities["flags"]
+        if active & CAP_SPEED:
+            if (self.capabilities["speed"] < self.opponent_capabilities["speed"] or
+                    (self.capabilities["speed"] == self.opponent_capabilities["speed"] and
+                     self.player_id > self.opponent_id)):
+                order.reverse()
+        elif self.player_id > self.opponent_id:
             order.reverse()
         my_defending = self.my_move == DEFEND
         opponent_defending = self.opponent_move == DEFEND
@@ -176,6 +246,7 @@ class Battle:
             atk = self.attack if who == "me" else self.opponent_attack
             deff = self.opponent_defense if who == "me" else self.defense
             target_defending = opponent_defending if who == "me" else my_defending
+            target_move = self.opponent_move if who == "me" else self.my_move
             roll = self.prng.next()
             is_special = move == SPECIAL
             label = "You" if who == "me" else "Opponent"
@@ -186,9 +257,28 @@ class Battle:
             damage = atk - c_div(deff, 2)
             if is_special:
                 damage = c_div(damage * 3, 2)
+            if active & CAP_MOVE_MATCHUPS:
+                move_percent = 100
+                if move == ATTACK and target_move == SPECIAL:
+                    move_percent = 125
+                if move == SPECIAL and target_move == DEFEND:
+                    move_percent = 125
+                damage = c_div(damage * move_percent, 100)
+            attacker_caps = self.capabilities if who == "me" else self.opponent_capabilities
+            defender_caps = self.opponent_capabilities if who == "me" else self.capabilities
+            if active & CAP_BODY_TYPE:
+                damage = c_div(damage * matchup_percent(
+                    body_style(attacker_caps["body"]), body_style(defender_caps["body"])), 100)
+            if active & CAP_ELEMENT:
+                damage = c_div(damage * element_percent(
+                    attacker_caps["element"], defender_caps["element"]), 100)
+            if is_special and active & CAP_SPECIAL:
+                damage = c_div(damage * (100 + min(attacker_caps["special"], 100) // 4), 100)
             variance = (roll % 41) - 20  # +/-20%
             damage += c_div(damage * variance, 100)
-            if target_defending:
+            special_breaks_guard = bool(active & CAP_MOVE_MATCHUPS and
+                                        is_special and target_defending)
+            if target_defending and not special_breaks_guard:
                 damage = c_div(damage, 2)
             damage = max(1, damage)
             if who == "me":
@@ -198,6 +288,8 @@ class Battle:
             action = "Special" if is_special else "Attack"
             print(f"[battle] {label} used {action} for {damage} dmg. "
                  f"(You {self.hp}/{self.max_hp}  Opp {self.opponent_hp}/{self.opponent_max_hp})")
+            if active & CAP_SPEED and (self.hp == 0 or self.opponent_hp == 0):
+                break
 
         self.turn += 1
         self.my_move = None
@@ -210,6 +302,11 @@ class Battle:
 async def run(args: argparse.Namespace) -> None:
     battle: Battle | None = None
     server: BlessServer
+    flags = (CAP_BODY_TYPE | CAP_ELEMENT | CAP_SPEED | CAP_SPECIAL |
+             CAP_MOVE_MATCHUPS) if args.enhanced else 0
+    capabilities = {"flags": flags, "body": args.body_type,
+                    "element": args.element, "speed": args.speed,
+                    "special": args.special}
 
     def notify(data: bytes) -> None:
         characteristic = server.get_characteristic(NOTIFY_CHAR_UUID)
@@ -240,9 +337,26 @@ async def run(args: argparse.Namespace) -> None:
         if msg_type == MSG_HELLO:
             if len(data) < 13:
                 return
-            battle = Battle(args.player_id, args.stage, args.level, args.interactive)
+            battle = Battle(args.player_id, args.stage, args.level,
+                            args.interactive, capabilities)
             notify(battle.handle_hello(data[1:13]))
+            packet = battle.capability_packet()
+            if packet is not None:
+                notify(packet)
+            if args.genome_code:
+                for chunk in range(5):
+                    start = chunk * 12
+                    notify(bytes([MSG_GENOME_CHUNK, chunk]) +
+                           args.genome_code[start:start + 12].encode("ascii"))
+            # Give an enhanced challenger time to send its optional packet.
+            await asyncio.sleep(0.1)
             await submit_my_move_if_needed()
+        elif msg_type == MSG_CAPABILITIES:
+            if battle is not None:
+                battle.handle_capabilities(data)
+        elif msg_type == MSG_GENOME_CHUNK:
+            if battle is not None:
+                battle.handle_genome_chunk(data)
         elif msg_type == MSG_MOVE:
             if battle is None or battle.done or len(data) < 2:
                 return
@@ -292,7 +406,7 @@ async def run(args: argparse.Namespace) -> None:
     await server.start()
     print(f"[sim] {args.name}: Lv{args.level} stage {args.stage} "
          f"(player id {args.player_id:#010x})")
-    print("[sim] Waiting for a Cardputer to challenge via Find Opponent...")
+    print("[sim] Waiting for a compatible device to challenge...")
     print("[sim] Ctrl+C to stop.")
     try:
         while True:
@@ -319,6 +433,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--interactive", action="store_true",
                         help="prompt on stdin for each move instead of "
                              "playing a canned AI")
+    parser.add_argument("--enhanced", action="store_true",
+                        help="advertise all optional capability fields")
+    parser.add_argument("--body-type", type=int, choices=range(5), default=1,
+                        help="enhanced body: 0 quadruped, 1 humanoid, 2 avian, "
+                             "3 blob, 4 serpent")
+    parser.add_argument("--element", type=int, choices=range(6), default=5,
+                        help="enhanced element: 0 fire, 1 water, 2 nature, "
+                             "3 electric, 4 dark, 5 digital")
+    parser.add_argument("--speed", type=int, choices=range(1, 101), default=50,
+                        help="enhanced normalized Speed (1-100)")
+    parser.add_argument("--special", type=int, choices=range(1, 101), default=50,
+                        help="enhanced normalized Special (1-100)")
+    parser.add_argument("--genome-code", default="",
+                        help="optional 60-character Digipet Genome Code to share")
     parser.add_argument("--adapter", default=None,
                         help="BlueZ adapter to advertise from (e.g. hci1) "
                              "-- only meaningful on Linux with more than "
@@ -328,7 +456,10 @@ def parse_args() -> argparse.Namespace:
                              "list` shows [default]) -- if the real badge "
                              "can't find this script, try pointing it at "
                              "your default adapter explicitly.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.genome_code and len(args.genome_code) != 60:
+        parser.error("--genome-code must contain exactly 60 characters")
+    return args
 
 
 def main() -> None:

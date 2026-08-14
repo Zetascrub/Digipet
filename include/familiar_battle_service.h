@@ -34,6 +34,22 @@ enum class FamiliarBattleOutcome : uint8_t {
     Disconnected,
 };
 
+enum FamiliarBattleCapability : uint16_t {
+    FamiliarCapBodyType = 1u << 0,
+    FamiliarCapElement = 1u << 1,
+    FamiliarCapSpeed = 1u << 2,
+    FamiliarCapSpecial = 1u << 3,
+    FamiliarCapMoveMatchups = 1u << 4,
+};
+
+struct FamiliarBattleCapabilities {
+    uint16_t flags = 0;
+    uint8_t bodyType = 0;
+    uint8_t element = 0;
+    uint8_t speed = 0;
+    uint8_t special = 0;
+};
+
 struct FamiliarBattleOpponent {
     String address;   // "XX:XX:XX:XX:XX:XX", re-resolved to a NimBLEAddress
                       // at connectTo() time rather than keeping a raw
@@ -44,6 +60,7 @@ struct FamiliarBattleOpponent {
     uint8_t stageIndex = 0;
     uint8_t level = 0;
     int rssi = 0;
+    FamiliarBattleCapabilities capabilities;
 };
 
 // Manual "Direct Challenge" BLE PvP battles between two Familiars -- see
@@ -74,11 +91,15 @@ public:
     // `playerId` should be stable across boots -- main.cpp derives it from
     // ESP.getEfuseMac(), the same source already used for other per-device
     // IDs in this app.
-    bool beginHost(uint32_t playerId, uint8_t stageIndex, uint8_t level);
+    bool beginHost(uint32_t playerId, uint8_t stageIndex, uint8_t level,
+                   const FamiliarBattleCapabilities& capabilities = {},
+                   const char* genomeCode = nullptr);
     // Bounded, blocking scan (same shape as ble_scanner.cpp's scan() /
     // chameleon_ultra_client.cpp's connect()) -- populates scanResults().
     // Call again to rescan.
-    bool beginFind(uint32_t playerId, uint8_t stageIndex, uint8_t level);
+    bool beginFind(uint32_t playerId, uint8_t stageIndex, uint8_t level,
+                   const FamiliarBattleCapabilities& capabilities = {},
+                   const char* genomeCode = nullptr);
     const std::vector<FamiliarBattleOpponent>& scanResults() const {
         return scanResults_;
     }
@@ -100,6 +121,11 @@ public:
     void submitMove(FamiliarBattleMove move);
     FamiliarBattleOutcome outcome() const { return outcome_; }
     const std::vector<String>& log() const { return log_; }
+    uint16_t negotiatedCapabilities() const {
+        return myCapabilities_.flags & opponent_.capabilities.flags;
+    }
+    bool opponentGenomeCodeAvailable() const { return opponentGenomeChunks_ == 0x1F; }
+    const char* opponentGenomeCode() const { return opponentGenomeCode_; }
 
     // Public only so the free-function/small-class NimBLE callback shims
     // in the .cpp can reach them -- not part of the intended external API.
@@ -113,6 +139,8 @@ private:
     void resetForNewBattle();
     void parseAdvertisement(const NimBLEAdvertisedDevice* advertised);
     void sendHello();
+    void sendCapabilities();
+    void sendGenomeCode();
     void sendMove(FamiliarBattleMove move);
     bool sendRaw(const uint8_t* data, size_t length);
     void handleIncomingMessage(const uint8_t* data, size_t length);
@@ -135,6 +163,10 @@ private:
     uint8_t myLevel_ = 0;
     uint8_t myAttack_ = 0;
     uint8_t myDefense_ = 0;
+    FamiliarBattleCapabilities myCapabilities_;
+    char myGenomeCode_[61]{};
+    char opponentGenomeCode_[61]{};
+    uint8_t opponentGenomeChunks_ = 0;
 
     FamiliarBattleOpponent opponent_;
     uint8_t opponentAttack_ = 0;

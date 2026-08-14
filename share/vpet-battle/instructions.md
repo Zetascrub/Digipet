@@ -104,6 +104,40 @@ The host advertises the VPet service and waits for a challenger:
 bool started = battle.beginHost(playerId, stageIndex, level);
 ```
 
+That three-argument call is the complete core profile. It remains compatible
+with enhanced peers; optional mechanics simply stay neutral.
+
+To advertise enhanced data, pass a capability structure:
+
+```cpp
+FamiliarBattleCapabilities profile;
+profile.flags = FamiliarCapBodyType | FamiliarCapElement |
+                FamiliarCapSpeed | FamiliarCapSpecial |
+                FamiliarCapMoveMatchups;
+profile.bodyType = 2; // Avian
+profile.element = 3;  // Electric
+profile.speed = 78;   // normalized 1-100
+profile.special = 64; // normalized 1-100
+
+battle.beginHost(playerId, stageIndex, level, profile);
+```
+
+Use the same optional fourth argument with `beginFind()`. Each mechanic is
+enabled only when both peers advertise its capability bit. Never manufacture a
+default value for a field the other peer omitted.
+
+Applications with a portable 60-character pet/genome identifier may pass it as
+the optional fifth argument. It is transported but never interpreted by the
+battle service:
+
+```cpp
+battle.beginHost(playerId, stageIndex, level, profile, genomeCode);
+```
+
+After the handshake, check `opponentGenomeCodeAvailable()` and validate
+`opponentGenomeCode()` in the owning application before offering a copy/trade.
+Core peers ignore these optional packets.
+
 Expected state flow:
 
 ```text
@@ -165,7 +199,24 @@ Disable move controls while `myMoveSubmitted()` is true. The service waits until
 
 Attack deals normal damage. Defend halves incoming damage for that turn. Special deals 1.5 times calculated damage but has a 15% miss chance. Flee immediately ends the local battle and informs the peer.
 
-Damage has deterministic ±20% variance. Both devices use the challenger's shared PRNG seed and resolve the lower player ID first, ensuring they consume random values in the same order.
+Those are the core rules. When both peers negotiate enhancements:
+
+- Move matchups: Attack beats Special, Special breaks Defend, Defend halves Attack.
+- Body styles: Power beats Tactical, Tactical beats Guard, Guard beats Power.
+- Body mapping: Quadruped=Power; Humanoid/Blob=Guard; Avian/Serpent=Tactical.
+- Elements: Fire > Nature > Water > Fire.
+- Elements: Electric > Digital > Dark > Electric.
+- Cross-triangle elemental encounters are neutral.
+- Speed determines first resolution; core peers continue using lower player ID.
+- Special scales Special damage by up to 25% from a normalized 1-100 value.
+
+Body advantage is deliberately modest (115% or 90%). Element advantage is
+125% or 80%. All percentage operations use truncating integer arithmetic.
+
+Damage has deterministic ±20% variance. Both devices use the challenger's
+shared PRNG seed. Core battles resolve the lower player ID first; enhanced
+battles use Speed and fall back to the lower player ID for a tie. This ensures
+both peers consume random values in the same order.
 
 ## Displaying an active battle
 
@@ -181,6 +232,9 @@ battle.opponent().playerId;
 battle.opponent().stageIndex;
 battle.opponent().level;
 battle.log();
+battle.negotiatedCapabilities();
+battle.opponentGenomeCodeAvailable();
+battle.opponentGenomeCode();
 ```
 
 `battle.log()` contains recent human-readable events. It retains at most 40 entries. Rendering is entirely the integrating application's responsibility.
@@ -241,6 +295,57 @@ Offset  Size  Value
 1       1     Move: Attack=0, Defend=1, Special=2, Flee=3
 ```
 
+### CAPABILITIES — optional message `0x03`
+
+Enhanced implementations send this separate message immediately after a
+successful HELLO send. Core implementations need not send it and must ignore
+the unknown message type. Keeping HELLO unchanged protects compatibility with
+implementations that require its original 13-byte length.
+
+Exactly 8 bytes for capability schema 1:
+
+```text
+Offset  Size  Value
+0       1     Message type: 0x03
+1       1     Capability schema: 1
+2       2     Capability flags, uint16 big-endian
+4       1     Body type: Quadruped=0, Humanoid=1, Avian=2, Blob=3, Serpent=4
+5       1     Element: Fire=0, Water=1, Nature=2, Electric=3, Dark=4, Digital=5
+6       1     Speed, normalized 1-100
+7       1     Special, normalized 1-100
+```
+
+Capability flags:
+
+```text
+0x0001  Body type is present and body matchups are supported
+0x0002  Element is present and elemental matchups are supported
+0x0004  Speed is present and speed ordering is supported
+0x0008  Special is present and Special scaling is supported
+0x0010  Move matchup rules are supported (no associated value)
+```
+
+Unknown flag bits are ignored. An invalid body or element clears only that
+field's capability. The active capability mask is the bitwise intersection of
+both peers' masks. Arrival order must not affect the core handshake.
+
+### GENOME CHUNK — optional message `0x04`
+
+A 60-character application-owned genome code is divided into five fixed
+14-byte packets. The battle service transports the string without trusting or
+interpreting it:
+
+```text
+Offset  Size  Value
+0       1     Message type: 0x04
+1       1     Chunk index: 0-4
+2       12    ASCII genome-code characters
+```
+
+Chunks may arrive in any order. Applications must validate the completed code
+before storing or presenting it. Implementations without genome trading may
+ignore message `0x04` entirely.
+
 ### Optional discovery payload
 
 Manufacturer data uses company ID `0xFFFF`, reserved for testing:
@@ -272,6 +377,14 @@ Interactive simulator battles are available with:
 python3 vpet_battle_simulator.py --level 10 --stage 2 --interactive
 ```
 
+The simulator defaults to the core profile, making it useful as a legacy-peer
+compatibility test. Enable all optional fields with:
+
+```bash
+python3 vpet_battle_simulator.py --enhanced --body-type 2 --element 3 \
+    --speed 78 --special 64
+```
+
 ## Compatibility rules
 
 For devices to remain interoperable:
@@ -280,10 +393,14 @@ For devices to remain interoperable:
 2. Do not change move numeric values.
 3. Do not change stat or damage formulas for only one implementation.
 4. Preserve the xorshift32 PRNG exactly.
-5. Preserve lower-player-ID-first resolution order.
-6. Keep protocol changes behind a new explicit protocol version.
+5. Preserve lower-player-ID-first core resolution and Speed/tied-ID enhanced
+   resolution order.
+6. Add backward-compatible optional data as a new ignored message type with an
+   explicit schema; reserve a new transport protocol version for breaking changes.
 7. Derive peer stats from level and stage instead of trusting arbitrary transmitted stats.
 8. Continue accepting service-UUID-only advertisements.
+9. Enable an optional rule only when both peers advertise its capability.
+10. Treat every missing optional field as neutral, never as a zero/default value.
 
 UI design, sprites, animation, sounds, controls, transport-status presentation, pet progression, rewards, and persistent records may differ freely without affecting protocol compatibility.
 

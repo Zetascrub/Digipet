@@ -41,13 +41,45 @@ uint32_t nextGene(uint32_t &state) {
   state ^= state << 5;
   return state;
 }
+
+uint32_t crc32(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xFFFFFFFF;
+  for (size_t i = 0; i < length; ++i) {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; ++bit)
+      crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+  }
+  return ~crc;
+}
+
+void writeWord(uint8_t *output, uint32_t value) {
+  output[0] = value >> 24;
+  output[1] = value >> 16;
+  output[2] = value >> 8;
+  output[3] = value;
+}
+
+uint32_t readWord(const uint8_t *input) {
+  return (static_cast<uint32_t>(input[0]) << 24) |
+         (static_cast<uint32_t>(input[1]) << 16) |
+         (static_cast<uint32_t>(input[2]) << 8) | input[3];
+}
+
+int8_t base32Value(char character) {
+  if (character >= 'a' && character <= 'z') character -= 32;
+  if (character == 'O') character = '0';
+  if (character == 'I' || character == 'L') character = '1';
+  constexpr char alphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const char *found = strchr(alphabet, character);
+  return found ? found - alphabet : -1;
+}
 }  // namespace
 
-PetGenome generatePetGenome() {
+PetGenome derivePetGenome(const uint32_t seed[4], const uint32_t evolutionSeed[4]) {
   PetGenome genome{};
   for (uint8_t i = 0; i < 4; ++i) {
-    genome.seed[i] = esp_random();
-    genome.evolutionSeed[i] = esp_random();
+    genome.seed[i] = seed[i];
+    genome.evolutionSeed[i] = evolutionSeed[i];
   }
   uint32_t state = genome.seed[0] ^ genome.seed[1] ^ genome.seed[2] ^ genome.seed[3];
   if (!state) state = 0xA53C9E17;
@@ -70,6 +102,126 @@ PetGenome generatePetGenome() {
   genome.mutationGenes = (nextGene(state) & 0x0F) == 0
       ? 1u << (nextGene(state) % 5) : 0;
   return genome;
+}
+
+PetGenome generatePetGenome() {
+  uint32_t seed[4];
+  uint32_t evolutionSeed[4];
+  for (uint8_t i = 0; i < 4; ++i) {
+    seed[i] = esp_random();
+    evolutionSeed[i] = esp_random();
+  }
+  return derivePetGenome(seed, evolutionSeed);
+}
+
+PetGenome blendPetGenomes(const PetGenome &first, const PetGenome &second) {
+  uint32_t seed[4];
+  uint32_t evolutionSeed[4];
+  for (uint8_t i = 0; i < 4; ++i) {
+    const uint32_t mask = esp_random();
+    seed[i] = (first.seed[i] & mask) | (second.seed[i] & ~mask);
+    evolutionSeed[i] = first.evolutionSeed[i] ^ second.evolutionSeed[(i + 1) & 3] ^
+                       esp_random();
+  }
+  return derivePetGenome(seed, evolutionSeed);
+}
+
+bool encodePetGenome(const PetGenome &genome, char *output, size_t outputSize) {
+  if (!output || outputSize <= PET_GENOME_CODE_LENGTH) return false;
+  uint8_t payload[37]{};
+  payload[0] = 1;
+  for (uint8_t i = 0; i < 4; ++i) writeWord(payload + 1 + i * 4, genome.seed[i]);
+  for (uint8_t i = 0; i < 4; ++i)
+    writeWord(payload + 17 + i * 4, genome.evolutionSeed[i]);
+  writeWord(payload + 33, crc32(payload, 33));
+
+  constexpr char alphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  uint32_t buffer = 0;
+  uint8_t bits = 0;
+  size_t written = 0;
+  for (uint8_t byte : payload) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      output[written++] = alphabet[(buffer >> bits) & 0x1F];
+    }
+  }
+  if (bits) output[written++] = alphabet[(buffer << (5 - bits)) & 0x1F];
+  output[written] = '\0';
+  return written == PET_GENOME_CODE_LENGTH;
+}
+
+bool decodePetGenome(const char *code, PetGenome &genome) {
+  if (!code) return false;
+  uint8_t payload[37]{};
+  uint32_t buffer = 0;
+  uint8_t bits = 0;
+  size_t written = 0;
+  size_t symbols = 0;
+  for (const char *cursor = code; *cursor; ++cursor) {
+    if (*cursor == '-' || *cursor == ' ' || *cursor == '\r' || *cursor == '\n') continue;
+    const int8_t value = base32Value(*cursor);
+    if (value < 0 || symbols++ >= PET_GENOME_CODE_LENGTH) return false;
+    buffer = (buffer << 5) | value;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      if (written >= sizeof(payload)) return false;
+      payload[written++] = buffer >> bits;
+    }
+  }
+  if (symbols != PET_GENOME_CODE_LENGTH || written != sizeof(payload) || payload[0] != 1)
+    return false;
+  if (readWord(payload + 33) != crc32(payload, 33)) return false;
+  uint32_t seed[4];
+  uint32_t evolutionSeed[4];
+  for (uint8_t i = 0; i < 4; ++i) seed[i] = readWord(payload + 1 + i * 4);
+  for (uint8_t i = 0; i < 4; ++i) evolutionSeed[i] = readWord(payload + 17 + i * 4);
+  genome = derivePetGenome(seed, evolutionSeed);
+  return true;
+}
+
+uint64_t petGenomeDesignId(const PetGenome &genome) {
+  // FNV-1a provides a compact, deterministic identity for the complete saved
+  // blueprint. The genome, rather than this identifier, remains authoritative
+  // for reconstructing every procedural feature.
+  constexpr uint64_t offset = 14695981039346656037ULL;
+  constexpr uint64_t prime = 1099511628211ULL;
+  uint64_t hash = offset;
+  const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&genome);
+  for (size_t i = 0; i < sizeof(genome); ++i) {
+    hash ^= bytes[i];
+    hash *= prime;
+  }
+  return hash;
+}
+
+uint8_t evolvedGenomeGene(const PetGenome &genome, uint8_t base, uint8_t stage,
+                          uint8_t channel, uint8_t maximumDrift) {
+  stage = min<uint8_t>(stage, 4);
+  uint32_t state = genome.evolutionSeed[channel & 3] ^
+                   (0x9E3779B9u * (channel + 1));
+  int value = base;
+  for (uint8_t form = 1; form <= stage; ++form) {
+    const int span = maximumDrift * form / 4;
+    const int delta = static_cast<int>(nextGene(state) % (span * 2 + 1)) - span;
+    value = constrain(static_cast<int>(base) + delta, 0, 255);
+  }
+  return value;
+}
+
+uint16_t evolvedGenomeFeatures(const PetGenome &genome, uint8_t stage) {
+  uint16_t features = genome.featureGenes;
+  stage = min<uint8_t>(stage, 4);
+  for (uint8_t form = 1; form <= stage; ++form) {
+    uint32_t state = genome.evolutionSeed[(form - 1) & 3] ^ (0xA511E9B3u * form);
+    const uint8_t bit = nextGene(state) % 12;
+    // Most stages reveal a recessive feature; rarer branches suppress one.
+    if ((nextGene(state) & 3) == 0) features &= ~(1u << bit);
+    else features |= 1u << bit;
+  }
+  return features;
 }
 
 PetPalette paletteForGenome(const PetGenome &genome) {

@@ -27,6 +27,32 @@ constexpr uint32_t kConnectTimeoutMs = 6000;
 
 constexpr uint8_t kMsgHello = 0x01;
 constexpr uint8_t kMsgMove = 0x02;
+constexpr uint8_t kMsgCapabilities = 0x03;
+constexpr uint8_t kMsgGenomeChunk = 0x04;
+constexpr uint8_t kCapabilitiesSchema = 1;
+
+uint8_t bodyCombatStyle(uint8_t bodyType) {
+    // Power, Guard, Tactical. Multiple silhouettes may share a style.
+    constexpr uint8_t styles[] = {0, 1, 2, 1, 2};
+    return styles[bodyType % 5];
+}
+
+int matchupPercent(uint8_t attacker, uint8_t defender) {
+    if (attacker == defender) return 100;
+    // Power > Tactical > Guard > Power.
+    return ((attacker == 0 && defender == 2) ||
+            (attacker == 2 && defender == 1) ||
+            (attacker == 1 && defender == 0)) ? 115 : 90;
+}
+
+int elementPercent(uint8_t attacker, uint8_t defender) {
+    if (attacker == defender) return 100;
+    // Fire > Nature > Water > Fire; Electric > Digital > Dark > Electric.
+    constexpr uint8_t beats[] = {2, 0, 1, 5, 3, 4};
+    if (beats[attacker % 6] == defender % 6) return 125;
+    if (beats[defender % 6] == attacker % 6) return 80;
+    return 100;
+}
 
 FamiliarBattleService* g_owner = nullptr;
 
@@ -109,16 +135,23 @@ void FamiliarBattleService::resetForNewBattle() {
     inboundTail_ = 0;
     connectPending_ = false;
     disconnectPending_ = false;
+    myGenomeCode_[0] = '\0';
+    memset(opponentGenomeCode_, 0, sizeof(opponentGenomeCode_));
+    opponentGenomeChunks_ = 0;
 }
 
-bool FamiliarBattleService::beginHost(uint32_t playerId, uint8_t stageIndex,
-                                      uint8_t level) {
+bool FamiliarBattleService::beginHost(
+    uint32_t playerId, uint8_t stageIndex, uint8_t level,
+    const FamiliarBattleCapabilities& capabilities, const char* genomeCode) {
     end();
     resetForNewBattle();
     isHost_ = true;
     myPlayerId_ = playerId;
     myStageIndex_ = stageIndex;
     myLevel_ = level;
+    myCapabilities_ = capabilities;
+    if (genomeCode && strlen(genomeCode) == 60)
+        strncpy(myGenomeCode_, genomeCode, sizeof(myGenomeCode_) - 1);
     myAttack_ = deriveAttack(level, stageIndex);
     myDefense_ = deriveDefense(level, stageIndex);
     myMaxHp_ = deriveMaxHp(level);
@@ -243,14 +276,18 @@ void FamiliarBattleService::parseAdvertisement(
     scanResults_.push_back(found);
 }
 
-bool FamiliarBattleService::beginFind(uint32_t playerId, uint8_t stageIndex,
-                                      uint8_t level) {
+bool FamiliarBattleService::beginFind(
+    uint32_t playerId, uint8_t stageIndex, uint8_t level,
+    const FamiliarBattleCapabilities& capabilities, const char* genomeCode) {
     end();
     resetForNewBattle();
     isHost_ = false;
     myPlayerId_ = playerId;
     myStageIndex_ = stageIndex;
     myLevel_ = level;
+    myCapabilities_ = capabilities;
+    if (genomeCode && strlen(genomeCode) == 60)
+        strncpy(myGenomeCode_, genomeCode, sizeof(myGenomeCode_) - 1);
     myAttack_ = deriveAttack(level, stageIndex);
     myDefense_ = deriveDefense(level, stageIndex);
     myMaxHp_ = deriveMaxHp(level);
@@ -449,7 +486,35 @@ void FamiliarBattleService::sendHello() {
     buf[10] = static_cast<uint8_t>(prngState_ >> 16);
     buf[11] = static_cast<uint8_t>(prngState_ >> 8);
     buf[12] = static_cast<uint8_t>(prngState_);
-    if (sendRaw(buf, sizeof(buf))) helloSent_ = true;
+    if (sendRaw(buf, sizeof(buf))) {
+        helloSent_ = true;
+        sendCapabilities();
+        sendGenomeCode();
+    }
+}
+
+void FamiliarBattleService::sendCapabilities() {
+    if (myCapabilities_.flags == 0) return;
+    const uint8_t buf[] = {
+        kMsgCapabilities,
+        kCapabilitiesSchema,
+        static_cast<uint8_t>(myCapabilities_.flags >> 8),
+        static_cast<uint8_t>(myCapabilities_.flags),
+        myCapabilities_.bodyType,
+        myCapabilities_.element,
+        myCapabilities_.speed,
+        myCapabilities_.special,
+    };
+    sendRaw(buf, sizeof(buf));
+}
+
+void FamiliarBattleService::sendGenomeCode() {
+    if (strlen(myGenomeCode_) != 60) return;
+    for (uint8_t chunk = 0; chunk < 5; ++chunk) {
+        uint8_t buf[14] = {kMsgGenomeChunk, chunk};
+        memcpy(buf + 2, myGenomeCode_ + chunk * 12, 12);
+        sendRaw(buf, sizeof(buf));
+    }
 }
 
 void FamiliarBattleService::sendMove(FamiliarBattleMove move) {
@@ -500,8 +565,7 @@ void FamiliarBattleService::handleIncomingMessage(const uint8_t* data,
                 state_ = FamiliarBattleState::Battling;
                 status_ = "Battle!";
                 turnNumber_ = 1;
-                addLog("A challenger's Familiar (Lv " + String(peerLevel) +
-                      ") appeared!");
+                addLog("Lv " + String(peerLevel) + " Familiar appeared!");
             }
             break;
         }
@@ -511,12 +575,38 @@ void FamiliarBattleService::handleIncomingMessage(const uint8_t* data,
                                 ? static_cast<FamiliarBattleMove>(data[1])
                                 : FamiliarBattleMove::Attack;
             if (opponentMove_ == FamiliarBattleMove::Flee) {
-                addLog("Opponent fled the battle.");
+                addLog("Opponent fled!");
                 concludeBattle(FamiliarBattleOutcome::OpponentFled);
                 return;
             }
             opponentMoveSubmitted_ = true;
             resolveTurnIfReady();
+            break;
+        }
+        case kMsgCapabilities: {
+            if (length < 8 || data[1] != kCapabilitiesSchema) return;
+            FamiliarBattleCapabilities received;
+            received.flags = (static_cast<uint16_t>(data[2]) << 8) | data[3];
+            received.bodyType = data[4];
+            received.element = data[5];
+            received.speed = data[6];
+            received.special = data[7];
+            if (received.bodyType >= 5) received.flags &= ~FamiliarCapBodyType;
+            if (received.element >= 6) received.flags &= ~FamiliarCapElement;
+            opponent_.capabilities = received;
+            const uint16_t active = negotiatedCapabilities();
+            if (active) addLog("Enhanced link active.");
+            break;
+        }
+        case kMsgGenomeChunk: {
+            if (length != 14 || data[1] >= 5) return;
+            const uint8_t chunk = data[1];
+            memcpy(opponentGenomeCode_ + chunk * 12, data + 2, 12);
+            opponentGenomeChunks_ |= 1u << chunk;
+            if (opponentGenomeCodeAvailable()) {
+                opponentGenomeCode_[60] = '\0';
+                addLog("Genome received.");
+            }
             break;
         }
         default:
@@ -530,7 +620,7 @@ void FamiliarBattleService::submitMove(FamiliarBattleMove move) {
     myMoveSubmitted_ = true;
     sendMove(move);
     if (move == FamiliarBattleMove::Flee) {
-        addLog("You fled the battle.");
+        addLog("You fled!");
         concludeBattle(FamiliarBattleOutcome::Fled);
         return;
     }
@@ -547,7 +637,16 @@ void FamiliarBattleService::resolveTurnIfReady() {
         FamiliarBattleMove move;
     };
     Actor order[2] = {{true, myMove_}, {false, opponentMove_}};
-    if (myPlayerId_ > opponent_.playerId) std::swap(order[0], order[1]);
+    const uint16_t active = negotiatedCapabilities();
+    if (active & FamiliarCapSpeed) {
+        if (myCapabilities_.speed < opponent_.capabilities.speed ||
+            (myCapabilities_.speed == opponent_.capabilities.speed &&
+             myPlayerId_ > opponent_.playerId)) {
+            std::swap(order[0], order[1]);
+        }
+    } else if (myPlayerId_ > opponent_.playerId) {
+        std::swap(order[0], order[1]);
+    }
 
     const bool myDefending = (myMove_ == FamiliarBattleMove::Defend);
     const bool opponentDefending = (opponentMove_ == FamiliarBattleMove::Defend);
@@ -560,17 +659,48 @@ void FamiliarBattleService::resolveTurnIfReady() {
         const uint8_t atk = actor.isMe ? myAttack_ : opponentAttack_;
         const uint8_t def = actor.isMe ? opponentDefense_ : myDefense_;
         const bool targetDefending = actor.isMe ? opponentDefending : myDefending;
+        const FamiliarBattleMove targetMove = actor.isMe ? opponentMove_ : myMove_;
         const uint32_t roll = nextRandom();
         const bool isSpecial = actor.move == FamiliarBattleMove::Special;
         if (isSpecial && roll % 100 < 15) {
-            addLog(String(actor.isMe ? "Your" : "Opponent's") + " Special missed!");
+            addLog(String(actor.isMe ? "You" : "Opp") + ": SPECIAL MISSED");
             continue;
         }
         int32_t damage = static_cast<int32_t>(atk) - static_cast<int32_t>(def) / 2;
         if (isSpecial) damage = damage * 3 / 2;
+        if (active & FamiliarCapMoveMatchups) {
+            int movePercent = 100;
+            if (actor.move == FamiliarBattleMove::Attack &&
+                targetMove == FamiliarBattleMove::Special) movePercent = 125;
+            if (actor.move == FamiliarBattleMove::Special &&
+                targetMove == FamiliarBattleMove::Defend) movePercent = 125;
+            damage = damage * movePercent / 100;
+        }
+        if (active & FamiliarCapBodyType) {
+            const uint8_t attackerBody = actor.isMe
+                ? myCapabilities_.bodyType : opponent_.capabilities.bodyType;
+            const uint8_t defenderBody = actor.isMe
+                ? opponent_.capabilities.bodyType : myCapabilities_.bodyType;
+            damage = damage * matchupPercent(bodyCombatStyle(attackerBody),
+                                             bodyCombatStyle(defenderBody)) / 100;
+        }
+        if (active & FamiliarCapElement) {
+            const uint8_t attackerElement = actor.isMe
+                ? myCapabilities_.element : opponent_.capabilities.element;
+            const uint8_t defenderElement = actor.isMe
+                ? opponent_.capabilities.element : myCapabilities_.element;
+            damage = damage * elementPercent(attackerElement, defenderElement) / 100;
+        }
+        if (isSpecial && (active & FamiliarCapSpecial)) {
+            const uint8_t special = actor.isMe
+                ? myCapabilities_.special : opponent_.capabilities.special;
+            damage = damage * (100 + std::min<uint8_t>(special, 100) / 4) / 100;
+        }
         const int32_t variance = static_cast<int32_t>(roll % 41) - 20;  // +/-20%
         damage += damage * variance / 100;
-        if (targetDefending) damage /= 2;
+        const bool specialBreaksGuard = (active & FamiliarCapMoveMatchups) &&
+                                        isSpecial && targetDefending;
+        if (targetDefending && !specialBreaksGuard) damage /= 2;
         if (damage < 1) damage = 1;
 
         if (actor.isMe) {
@@ -578,9 +708,10 @@ void FamiliarBattleService::resolveTurnIfReady() {
         } else {
             myHp_ = myHp_ > damage ? myHp_ - damage : 0;
         }
-        addLog(String(actor.isMe ? "You" : "Opponent") + " used " +
-              (isSpecial ? "Special" : "Attack") + " for " + String(damage) +
-              " dmg.");
+        addLog(String(actor.isMe ? "You" : "Opp") + ": " +
+              (isSpecial ? "SPECIAL" : "ATTACK") + " -" + String(damage) + " dmg");
+        if ((active & FamiliarCapSpeed) &&
+            (myHp_ == 0 || opponentHp_ == 0)) break;
     }
 
     ++turnNumber_;

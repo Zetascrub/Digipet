@@ -76,7 +76,9 @@ including integration instructions and a compatible Python BLE simulator.
 
 Battle rendering is device-specific. The shared service owns discovery,
 handshaking, moves, deterministic turn resolution, stats, outcomes, and the BLE
-wire protocol.
+wire protocol. Optional body, element, speed, special, and move-matchup rules
+are negotiated per battle; peers that implement only HP, attack, and defence
+continue to use the unchanged core rules.
 
 ## Repository layout
 

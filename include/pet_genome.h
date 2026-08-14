@@ -47,8 +47,17 @@ struct PetPalette {
   uint16_t glow;
 };
 
+constexpr size_t PET_GENOME_CODE_LENGTH = 60;
+
 PetGenome generatePetGenome();
+PetGenome derivePetGenome(const uint32_t seed[4], const uint32_t evolutionSeed[4]);
+PetGenome blendPetGenomes(const PetGenome &first, const PetGenome &second);
+bool encodePetGenome(const PetGenome &genome, char *output, size_t outputSize);
+bool decodePetGenome(const char *code, PetGenome &genome);
+uint64_t petGenomeDesignId(const PetGenome &genome);
+uint8_t evolvedGenomeGene(const PetGenome &genome, uint8_t base, uint8_t stage,
+                          uint8_t channel, uint8_t maximumDrift);
+uint16_t evolvedGenomeFeatures(const PetGenome &genome, uint8_t stage);
 PetPalette paletteForGenome(const PetGenome &genome);
 const char *eggLineageName(uint8_t lineage);
 const char *elementName(uint8_t element);
-
