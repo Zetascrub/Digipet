@@ -4,6 +4,7 @@
 #include <ESP_I2S.h>
 #include <SD_MMC.h>
 #include <WiFi.h>
+#include <cstdarg>
 #include <time.h>
 #include <esp32-hal-psram.h>
 #include <esp_mac.h>
@@ -149,7 +150,14 @@ float lastAccelX = 0;
 float lastAccelY = 0;
 float lastAccelZ = 0;
 char clockText[6] = "--:--";
+// `message` is the current feedback string; it's only actually shown while
+// `toastVisible` is true, as a slide-down banner drawn by drawToastOverlay()
+// (see its definition for the animation). Set both together through
+// showToast()/showToastf() below rather than writing `message` directly, so
+// nothing can set feedback text without also making it appear on screen.
 char message[40] = "Your companion is awake";
+bool toastVisible = false;
+uint32_t toastShownAt = 0;
 uint8_t playerId[32]{};
 char playerIdHex[65]{};
 uint64_t playerIdTimestamp = 0;
@@ -175,6 +183,25 @@ constexpr uint8_t kBattleResultsPerPage = 3;
 // mis-tap during a real match; the arm expires on its own too.
 bool fleeArmed = false;
 uint32_t fleeArmedUntil = 0;
+
+// Sets `message` and arms drawToastOverlay() to show it as a slide-down
+// banner on whichever of the five main pages is on screen next -- see the
+// comment on `message`'s declaration above.
+void showToast(const char *text) {
+  strncpy(message, text, sizeof(message) - 1);
+  message[sizeof(message) - 1] = '\0';
+  toastShownAt = millis();
+  toastVisible = true;
+}
+
+void showToastf(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vsnprintf(message, sizeof(message), format, args);
+  va_end(args);
+  toastShownAt = millis();
+  toastVisible = true;
+}
 
 struct NetworkConfig {
   char ssid[65];
@@ -1340,6 +1367,19 @@ void drawButton(const char *label, int16_t x) {
   display->print(label);
 }
 
+// Instant touch-down feedback for a button/tile, drawn as a bright double
+// outline on top of whatever's already there. Called the moment a finger
+// lands (see loop()'s touch-down handling), straight to the live panel
+// rather than through the canvas/present pipeline the rest of the app
+// uses -- the whole point is to beat the latency of a full recompose, and
+// every action this covers already ends in one on release, which erases
+// it for free. Doesn't need to know the button's own fill/label/color, so
+// it works the same for any button without risking drift from its style.
+void flashPressedHighlight(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius) {
+  display->drawRoundRect(x, y, w, h, radius, RGB565_WHITE);
+  display->drawRoundRect(x + 1, y + 1, w - 2, h - 2, max<int16_t>(1, radius - 1), RGB565_WHITE);
+}
+
 void drawEgg(bool frame, uint16_t bg) {
   const PetPalette palette = paletteForGenome(pet.genome);
   const uint8_t lineage = pet.genome.lineage % 10;
@@ -2229,8 +2269,7 @@ void beginNewEgg(uint8_t mode) {
   newEggConfirmation = false;
   pendingHatchMode = 0;
   newEggConfirmationUntil = 0;
-  snprintf(message, sizeof(message), "%s signal acquired",
-           eggLineageName(pet.genome.lineage));
+  showToastf("%s signal acquired", eggLineageName(pet.genome.lineage));
   playTone(392, 70, 40);
   playTone(523, 70, 45);
   playTone(784, 130, 50);
@@ -2416,7 +2455,7 @@ void debugAdvanceEvolution() {
   if (pet.stage >= 4) return;
   pet.stage++;
   savePet();
-  snprintf(message, sizeof(message), "Debug form: %s", STAGE_NAMES[pet.stage]);
+  showToastf("Debug form: %s", STAGE_NAMES[pet.stage]);
   playTone(440, 60, 40);
   playTone(659, 70, 45);
   playTone(880, 110, 50);
@@ -2667,22 +2706,68 @@ void drawBattlePage() {
   drawPageDots(PAGE_BATTLE);
 }
 
-void drawHome() {
-  if (currentPage == PAGE_COMPANION) drawCompanionPage();
-  else if (currentPage == PAGE_STATUS) drawStatusPage();
-  else if (currentPage == PAGE_BATTLE) drawBattlePage();
-  else if (currentPage == PAGE_SETTINGS) drawSettingsPage();
-  else drawGenomeLabPage();
+// A slide-down banner for `message`/showToast(), drawn on top of whichever
+// page just rendered. There's no alpha channel on a 16-bit panel, so unlike
+// the boot sequence's color fades this only ever moves -- slide in, hold,
+// slide out -- the same trick playSlideTransition() uses for whole pages,
+// just applied to one small panel instead of the full frame.
+constexpr uint32_t kToastSlideMs = 220;
+constexpr uint32_t kToastHoldMs = 1500;
+constexpr int16_t kToastWidth = 300;
+constexpr int16_t kToastHeight = 44;
+constexpr int16_t kToastTargetY = 10;
+
+void drawToastOverlay() {
+  if (!toastVisible) return;
+  const uint32_t elapsed = millis() - toastShownAt;
+  constexpr uint32_t kTotalMs = kToastSlideMs * 2 + kToastHoldMs;
+  if (elapsed >= kTotalMs) {
+    toastVisible = false;  // Next redraw naturally omits it -- nothing to erase.
+    return;
+  }
+
+  float progress;
+  if (elapsed < kToastSlideMs) {
+    progress = bootSmoothstep(0.0f, kToastSlideMs, elapsed);
+  } else if (elapsed < kToastSlideMs + kToastHoldMs) {
+    progress = 1.0f;
+  } else {
+    progress = 1.0f - bootSmoothstep(0.0f, kToastSlideMs,
+                                     elapsed - kToastSlideMs - kToastHoldMs);
+  }
+
+  const int16_t hiddenY = -(kToastHeight + 6);
+  const int16_t x = (LCD_WIDTH - kToastWidth) / 2;
+  const int16_t y = hiddenY + lroundf((kToastTargetY - hiddenY) * progress);
+
+  drawPanelGlow(x, y, kToastWidth, kToastHeight, 20, COLOR_MINT);
+  display->fillRoundRect(x, y, kToastWidth, kToastHeight, 20, COLOR_CARD);
+  display->drawRoundRect(x, y, kToastWidth, kToastHeight, 20, COLOR_MINT);
+  drawCenteredInRect(message, x, y, kToastWidth, kToastHeight, 1, COLOR_TEXT);
 }
 
-void renderPageToCanvas(Page page, Arduino_Canvas &canvas) {
-  Arduino_GFX *previousDisplay = display;
-  display = &canvas;
+// Shared by drawHome() (draws straight to whatever `display` already is --
+// the live panel outside a transition) and renderPageToCanvas() (redirects
+// `display` to an offscreen canvas first) so the toast overlay always draws
+// last, on top of the freshly-composed page, regardless of which path
+// rendered it.
+void drawActivePage(Page page) {
   if (page == PAGE_COMPANION) drawCompanionPage();
   else if (page == PAGE_STATUS) drawStatusPage();
   else if (page == PAGE_BATTLE) drawBattlePage();
   else if (page == PAGE_SETTINGS) drawSettingsPage();
   else drawGenomeLabPage();
+  drawToastOverlay();
+}
+
+void drawHome() {
+  drawActivePage(currentPage);
+}
+
+void renderPageToCanvas(Page page, Arduino_Canvas &canvas) {
+  Arduino_GFX *previousDisplay = display;
+  display = &canvas;
+  drawActivePage(page);
   display = previousDisplay;
 }
 
@@ -2844,6 +2929,60 @@ void presentCoherentPageFrame(Page page) {
                             LCD_WIDTH, LCD_HEIGHT);
 }
 
+// Shared eased slide, used for every full-frame transition in this app
+// (page swipes, settings sub-view pushes, settings grid paging) so there is
+// exactly one place that owns the smoothstep curve, the frame pacing, and
+// the "new content enters, old content exits" compositing. `vertical`
+// selects which axis slides; `enterFromEnd` is true when the new frame
+// should slide in from the right/bottom while the old one exits toward the
+// left/top (a "forward" swipe), false for the reverse. Always measures the
+// actual panel blit time and subtracts it from the per-frame delay, so
+// every transition in the app holds the same ~1000/frameTimeMs pace
+// regardless of how long that particular blit happens to take.
+void playSlideTransition(const uint16_t *from, const uint16_t *to, bool vertical,
+                         bool enterFromEnd, uint8_t frameCount = 15,
+                         uint32_t frameTimeMs = 17) {
+  const int16_t span = vertical ? LCD_HEIGHT : LCD_WIDTH;
+  for (uint8_t frame = 1; frame <= frameCount; ++frame) {
+    const float linear = static_cast<float>(frame) / frameCount;
+    const float eased = linear * linear * (3.0f - 2.0f * linear);
+    const int16_t shift = min<int16_t>(span, lroundf(eased * span));
+    const int16_t remaining = span - shift;
+
+    if (vertical) {
+      if (enterFromEnd) {
+        if (remaining) memcpy(transitionFrame, from + static_cast<size_t>(shift) * LCD_WIDTH,
+                              static_cast<size_t>(remaining) * LCD_WIDTH * sizeof(uint16_t));
+        if (shift) memcpy(transitionFrame + static_cast<size_t>(remaining) * LCD_WIDTH, to,
+                          static_cast<size_t>(shift) * LCD_WIDTH * sizeof(uint16_t));
+      } else {
+        if (shift) memcpy(transitionFrame, to + static_cast<size_t>(remaining) * LCD_WIDTH,
+                          static_cast<size_t>(shift) * LCD_WIDTH * sizeof(uint16_t));
+        if (remaining) memcpy(transitionFrame + static_cast<size_t>(shift) * LCD_WIDTH, from,
+                              static_cast<size_t>(remaining) * LCD_WIDTH * sizeof(uint16_t));
+      }
+    } else {
+      for (int16_t y = 0; y < LCD_HEIGHT; ++y) {
+        uint16_t *out = transitionFrame + static_cast<size_t>(y) * LCD_WIDTH;
+        const uint16_t *oldRow = from + static_cast<size_t>(y) * LCD_WIDTH;
+        const uint16_t *newRow = to + static_cast<size_t>(y) * LCD_WIDTH;
+        if (enterFromEnd) {
+          if (remaining) memcpy(out, oldRow + shift, remaining * sizeof(uint16_t));
+          if (shift) memcpy(out + remaining, newRow, shift * sizeof(uint16_t));
+        } else {
+          if (shift) memcpy(out, newRow + remaining, shift * sizeof(uint16_t));
+          if (remaining) memcpy(out + shift, oldRow, remaining * sizeof(uint16_t));
+        }
+      }
+    }
+
+    const uint32_t frameStarted = millis();
+    panel->draw16bitRGBBitmap(0, 0, transitionFrame, LCD_WIDTH, LCD_HEIGHT);
+    const uint32_t elapsed = millis() - frameStarted;
+    if (elapsed < frameTimeMs) delay(frameTimeMs - elapsed);
+  }
+}
+
 void transitionSettingsView(SettingsView target, bool forward) {
   if (target == settingsView) return;
   if (!transitionsReady) {
@@ -2855,31 +2994,8 @@ void transitionSettingsView(SettingsView target, bool forward) {
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasA);
   settingsView = target;
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasB);
-  const uint16_t *from = pageCanvasA.getFramebuffer();
-  const uint16_t *to = pageCanvasB.getFramebuffer();
-  constexpr uint8_t FRAME_COUNT = 14;
-  constexpr uint32_t FRAME_TIME_MS = 17;
-
-  for (uint8_t frame = 1; frame <= FRAME_COUNT; ++frame) {
-    const float linear = static_cast<float>(frame) / FRAME_COUNT;
-    const float eased = linear * linear * (3.0f - 2.0f * linear);
-    const int16_t shift = min<int16_t>(LCD_WIDTH, lroundf(eased * LCD_WIDTH));
-    const int16_t remaining = LCD_WIDTH - shift;
-    for (int16_t y = 0; y < LCD_HEIGHT; ++y) {
-      uint16_t *out = transitionFrame + static_cast<size_t>(y) * LCD_WIDTH;
-      const uint16_t *oldRow = from + static_cast<size_t>(y) * LCD_WIDTH;
-      const uint16_t *newRow = to + static_cast<size_t>(y) * LCD_WIDTH;
-      if (forward) {
-        if (remaining) memcpy(out, oldRow + shift, remaining * sizeof(uint16_t));
-        if (shift) memcpy(out + remaining, newRow, shift * sizeof(uint16_t));
-      } else {
-        if (shift) memcpy(out, newRow + remaining, shift * sizeof(uint16_t));
-        if (remaining) memcpy(out + shift, oldRow, remaining * sizeof(uint16_t));
-      }
-    }
-    panel->draw16bitRGBBitmap(0, 0, transitionFrame, LCD_WIDTH, LCD_HEIGHT);
-    delay(FRAME_TIME_MS);
-  }
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/false, /*enterFromEnd=*/forward, 14);
 }
 
 void transitionSettingsGrid(uint8_t target) {
@@ -2895,29 +3011,8 @@ void transitionSettingsGrid(uint8_t target) {
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasA);
   settingsGridPage = target;
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasB);
-  const uint16_t *from = pageCanvasA.getFramebuffer();
-  const uint16_t *to = pageCanvasB.getFramebuffer();
-  constexpr uint8_t FRAME_COUNT = 14;
-
-  for (uint8_t frame = 1; frame <= FRAME_COUNT; ++frame) {
-    const float linear = static_cast<float>(frame) / FRAME_COUNT;
-    const float eased = linear * linear * (3.0f - 2.0f * linear);
-    const int16_t shift = min<int16_t>(LCD_HEIGHT, lroundf(eased * LCD_HEIGHT));
-    const int16_t remaining = LCD_HEIGHT - shift;
-    if (upward) {
-      if (remaining) memcpy(transitionFrame, from + static_cast<size_t>(shift) * LCD_WIDTH,
-                            static_cast<size_t>(remaining) * LCD_WIDTH * sizeof(uint16_t));
-      if (shift) memcpy(transitionFrame + static_cast<size_t>(remaining) * LCD_WIDTH, to,
-                        static_cast<size_t>(shift) * LCD_WIDTH * sizeof(uint16_t));
-    } else {
-      if (shift) memcpy(transitionFrame, to + static_cast<size_t>(remaining) * LCD_WIDTH,
-                        static_cast<size_t>(shift) * LCD_WIDTH * sizeof(uint16_t));
-      if (remaining) memcpy(transitionFrame + static_cast<size_t>(shift) * LCD_WIDTH, from,
-                            static_cast<size_t>(remaining) * LCD_WIDTH * sizeof(uint16_t));
-    }
-    panel->draw16bitRGBBitmap(0, 0, transitionFrame, LCD_WIDTH, LCD_HEIGHT);
-    delay(17);
-  }
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/upward, 14);
 }
 
 void presentBattlePage() {
@@ -2940,35 +3035,8 @@ void transitionToPage(Page target, int8_t direction) {
   renderPageToCanvas(currentPage, pageCanvasA);
   currentPage = target;
   renderPageToCanvas(currentPage, pageCanvasB);
-
-  const uint16_t *from = pageCanvasA.getFramebuffer();
-  const uint16_t *to = pageCanvasB.getFramebuffer();
-  constexpr uint8_t FRAME_COUNT = 15;
-  constexpr uint32_t FRAME_TIME_MS = 17;
-
-  for (uint8_t frame = 1; frame <= FRAME_COUNT; ++frame) {
-    const float linear = static_cast<float>(frame) / FRAME_COUNT;
-    const float eased = linear * linear * (3.0f - 2.0f * linear);
-    const int16_t shift = min<int16_t>(LCD_WIDTH, lroundf(eased * LCD_WIDTH));
-    const int16_t remaining = LCD_WIDTH - shift;
-
-    for (int16_t y = 0; y < LCD_HEIGHT; ++y) {
-      uint16_t *out = transitionFrame + static_cast<size_t>(y) * LCD_WIDTH;
-      const uint16_t *oldRow = from + static_cast<size_t>(y) * LCD_WIDTH;
-      const uint16_t *newRow = to + static_cast<size_t>(y) * LCD_WIDTH;
-      if (direction < 0) {
-        if (remaining) memcpy(out, oldRow + shift, remaining * sizeof(uint16_t));
-        if (shift) memcpy(out + remaining, newRow, shift * sizeof(uint16_t));
-      } else {
-        if (shift) memcpy(out, newRow + remaining, shift * sizeof(uint16_t));
-        if (remaining) memcpy(out + shift, oldRow, remaining * sizeof(uint16_t));
-      }
-    }
-    const uint32_t frameStarted = millis();
-    panel->draw16bitRGBBitmap(0, 0, transitionFrame, LCD_WIDTH, LCD_HEIGHT);
-    const uint32_t elapsed = millis() - frameStarted;
-    if (elapsed < FRAME_TIME_MS) delay(FRAME_TIME_MS - elapsed);
-  }
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/false, /*enterFromEnd=*/direction < 0, 15);
 }
 
 void updateClockDisplay() {
@@ -3107,20 +3175,71 @@ uint8_t calculateStage() {
   return 4;
 }
 
+// Reuses the boot sequence's own visual language (paintBootBackdrop/
+// drawBootParticles/drawBootCore, same screen position) rather than
+// inventing a second one, so evolving reads as the same kind of "genesis"
+// moment hatching/booting already are. Composed entirely in pageCanvasA
+// and blitted in one shot per frame -- same double-buffering the rest of
+// the app uses -- instead of drawing straight to the live panel.
+void playEvolutionAnimation() {
+  const PetPalette palette = paletteForGenome(pet.genome);
+  Arduino_GFX *previousDisplay = display;
+  paintBootBackdrop(palette);
+  const size_t frameBytes = static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t);
+
+  // Phase 1: a converging energy burst at the core, echoing the boot
+  // sequence's helix-converge finale. Held past drawBootCore's own 0.55
+  // convergence threshold throughout so the pulsing rings play the whole
+  // phase instead of only kicking in near the end.
+  constexpr uint32_t kBurstMs = 850;
+  const uint32_t burstStarted = millis();
+  for (uint32_t frame = 0; ; ++frame) {
+    const uint32_t elapsed = millis() - burstStarted;
+    const float progress = min(1.0f, elapsed / static_cast<float>(kBurstMs));
+    display = &pageCanvasA;
+    memcpy(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(), frameBytes);
+    drawBootParticles(palette, frame);
+    drawBootCore(palette, frame, 0.6f + progress * 0.4f);
+    drawCentered("DATA EVOLUTION", 60, 3,
+                lerpRgb565(COLOR_BACKGROUND, COLOR_TEXT, bootSmoothstep(0.0f, 0.3f, progress)));
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+    if (progress >= 1.0f) break;
+    delay(18);
+  }
+
+  // Phase 2: reveal the evolved creature itself (not just its stage name)
+  // growing and fading in at the same spot the core just pulsed at.
+  constexpr uint32_t kRevealMs = 600;
+  const uint32_t revealStarted = millis();
+  for (uint32_t frame = 0; ; ++frame) {
+    const uint32_t elapsed = millis() - revealStarted;
+    const float progress = min(1.0f, elapsed / static_cast<float>(kRevealMs));
+    const float eased = bootSmoothstep(0.0f, 1.0f, progress);
+    display = &pageCanvasA;
+    memcpy(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(), frameBytes);
+    drawBootParticles(palette, kBurstMs / 18 + frame);
+    drawCentered("DATA EVOLUTION", 60, 3, COLOR_TEXT);
+    drawCreaturePortrait(pet.genome, pet.stage, BOOT_CX, BOOT_CORE_Y,
+                        lroundf(40 + eased * 62),
+                        lerpRgb565(COLOR_BACKGROUND, palette.glow, eased));
+    drawCentered(STAGE_NAMES[pet.stage], 330, 3,
+                lerpRgb565(COLOR_BACKGROUND, COLOR_MINT, eased));
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+    if (progress >= 1.0f) break;
+    delay(18);
+  }
+  delay(750);  // Hold on the reveal before the caller returns to normal play.
+}
+
 void checkEvolution() {
   const uint8_t newStage = calculateStage();
   if (newStage > pet.stage) {
     pet.stage = newStage;
     savePet();
-    display->fillScreen(RGB565_BLACK);
-    for (int radius = 12; radius < 210; radius += 12) {
-      display->drawCircle(184, 224, radius, radius % 24 ? COLOR_CYAN : COLOR_MINT);
-      delay(45);
-    }
-    drawCentered("DATA EVOLUTION", 90, 3, COLOR_TEXT);
-    drawCentered(STAGE_NAMES[pet.stage], 330, 3, COLOR_MINT);
-    delay(1000);
-    snprintf(message, sizeof(message), "Evolved into %s", STAGE_NAMES[pet.stage]);
+    playEvolutionAnimation();
+    showToastf("Evolved into %s", STAGE_NAMES[pet.stage]);
   }
 }
 
@@ -3128,20 +3247,20 @@ void performAction(int action) {
   if (action == 0) {
     pet.food = addClamped(pet.food, 18);
     pet.energy = addClamped(pet.energy, 2);
-    strcpy(message, "Crunch! Data restored");
+    showToast("Crunch! Data restored");
   } else if (action == 1) {
     if (pet.energy < 8) {
-      strcpy(message, "Too tired to play");
+      showToast("Too tired to play");
       drawHome();
       return;
     }
     pet.joy = addClamped(pet.joy, 16);
     pet.energy = subtractClamped(pet.energy, 8);
     pet.food = subtractClamped(pet.food, 3);
-    strcpy(message, "Connection strengthened");
+    showToast("Connection strengthened");
   } else {
     if (pet.energy < 12) {
-      strcpy(message, "Needs idle time first");
+      showToast("Needs idle time first");
       drawHome();
       return;
     }
@@ -3149,7 +3268,7 @@ void performAction(int action) {
     pet.energy = subtractClamped(pet.energy, 12);
     pet.food = subtractClamped(pet.food, 4);
     pet.joy = addClamped(pet.joy, 3);
-    strcpy(message, "Training complete!");
+    showToast("Training complete!");
   }
   playActionSound(action);
   pet.actions++;
@@ -3218,7 +3337,7 @@ void wakeUp() {
   screenOff = false;
   lastInteraction = millis();
   panel->setBrightness(brightnessLevel());
-  strcpy(message, "Link restored");
+  showToast("Link restored");
   playTone(659, 60);
   playTone(880, 100);
   drawHome();
@@ -3522,6 +3641,17 @@ void loop() {
     lastAnimation = now;
     animationFrame = !animationFrame;
     presentCoherentPageFrame(PAGE_GENOME_LAB);
+  } else if (!sleeping && toastVisible && !showingEvolutionDebug &&
+             !showingGenomeProfile && !showingPlayerId && !showingUpdate &&
+             !showingBattleResults &&
+             (currentPage == PAGE_STATUS || currentPage == PAGE_BATTLE ||
+              currentPage == PAGE_SETTINGS) &&
+             now - lastAnimation >= 30) {
+    // Companion and Genome Lab above already redraw every tick and so pick
+    // up the toast for free; the other pages don't otherwise animate, so
+    // give the toast's slide its own redraw cadence here while it's up.
+    lastAnimation = now;
+    presentCoherentPageFrame(currentPage);
   }
 
   if (newEggConfirmation && now >= newEggConfirmationUntil) {
@@ -3552,6 +3682,27 @@ void loop() {
       lastInteraction = now;
       touchStartX = touchLastX = x;
       touchStartY = touchLastY = y;
+
+      // Instant press feedback for the two highest-traffic controls --
+      // FEED/PLAY/TRAIN and the battle move grid. The gate on each branch
+      // matches performAction()'s/handleBattleTap()'s own hit-test bounds
+      // exactly (wider than the drawn button in the FEED/PLAY/TRAIN case),
+      // so a highlight always appears whenever that tap will actually fire
+      // the action on release, even where the two don't quite line up
+      // pixel-for-pixel with the button art itself.
+      if (currentPage == PAGE_STATUS && y >= 360 && y < 448) {
+        constexpr int16_t kButtonX[] = {14, 132, 250};
+        const uint8_t index = x < 124 ? 0 : x < 244 ? 1 : 2;
+        flashPressedHighlight(kButtonX[index], 375, 104, 54, 14);
+      } else if (currentPage == PAGE_BATTLE &&
+                 battle.state() == FamiliarBattleState::Battling &&
+                 !battle.myMoveSubmitted() && y >= 276 && y <= 382) {
+        constexpr int16_t kColX[] = {24, 194};
+        constexpr int16_t kRowY[] = {280, 336};
+        const uint8_t col = x < LCD_WIDTH / 2 ? 0 : 1;
+        const uint8_t row = y < 329 ? 0 : 1;
+        flashPressedHighlight(kColX[col], kRowY[row], 150, 50, 14);
+      }
     } else {
       touchLastX = x;
       touchLastY = y;
@@ -3650,14 +3801,14 @@ void loop() {
         if (deltaX < 0 && currentPage < PAGE_GENOME_LAB) {
           playTone(988, 30, 35);
           const Page target = static_cast<Page>(currentPage + 1);
-          strcpy(message, target == PAGE_STATUS ? "Care console ready" :
-                                                 "Device setup ready");
+          showToast(target == PAGE_STATUS ? "Care console ready" :
+                                            "Device setup ready");
           transitionToPage(target, -1);
         } else if (deltaX > 0 && currentPage > PAGE_COMPANION) {
           playTone(784, 30, 35);
           const Page target = static_cast<Page>(currentPage - 1);
-          strcpy(message, target == PAGE_COMPANION ? "Companion link active" :
-                                                    "Care console ready");
+          showToast(target == PAGE_COMPANION ? "Companion link active" :
+                                              "Care console ready");
           transitionToPage(target, 1);
         }
       } else if (currentPage == PAGE_COMPANION && touchDuration < 900 &&
