@@ -2743,7 +2743,14 @@ void drawToastOverlay() {
   drawPanelGlow(x, y, kToastWidth, kToastHeight, 20, COLOR_MINT);
   display->fillRoundRect(x, y, kToastWidth, kToastHeight, 20, COLOR_CARD);
   display->drawRoundRect(x, y, kToastWidth, kToastHeight, 20, COLOR_MINT);
-  drawCenteredInRect(message, x, y, kToastWidth, kToastHeight, 1, COLOR_TEXT);
+  // Text only once the panel is fully on-screen: Arduino_GFX::drawChar's
+  // single-size fast path clips its *bottom* edge per pixel but only
+  // rejects the *top* as an all-or-nothing block check, so a glyph merely
+  // straddling y=0 still calls writePixelPreclipped() for its still-negative
+  // rows -- on a canvas that's a write below the framebuffer's PSRAM
+  // allocation, which panics ("Cache error: Dbus write to cache rejected")
+  // rather than silently clipping like every shape primitive here does.
+  if (y >= 0) drawCenteredInRect(message, x, y, kToastWidth, kToastHeight, 1, COLOR_TEXT);
 }
 
 // Shared by drawHome() (draws straight to whatever `display` already is --
@@ -3798,18 +3805,15 @@ void loop() {
                                     (battle.state() != FamiliarBattleState::Idle ||
                                      showingBattleResults);
       if (!battleLinkActive && abs(deltaX) > 60 && abs(deltaX) > abs(deltaY)) {
+        // No toast on a page swipe -- the destination page's own title
+        // already says where you landed, so a banner on top of it would
+        // just be repeated-every-swipe noise rather than useful feedback.
         if (deltaX < 0 && currentPage < PAGE_GENOME_LAB) {
           playTone(988, 30, 35);
-          const Page target = static_cast<Page>(currentPage + 1);
-          showToast(target == PAGE_STATUS ? "Care console ready" :
-                                            "Device setup ready");
-          transitionToPage(target, -1);
+          transitionToPage(static_cast<Page>(currentPage + 1), -1);
         } else if (deltaX > 0 && currentPage > PAGE_COMPANION) {
           playTone(784, 30, 35);
-          const Page target = static_cast<Page>(currentPage - 1);
-          showToast(target == PAGE_COMPANION ? "Companion link active" :
-                                              "Care console ready");
-          transitionToPage(target, 1);
+          transitionToPage(static_cast<Page>(currentPage - 1), 1);
         }
       } else if (currentPage == PAGE_COMPANION && touchDuration < 900 &&
                  abs(deltaX) < 30 && abs(deltaY) < 30 &&
