@@ -184,6 +184,32 @@ constexpr uint8_t kBattleResultsPerPage = 3;
 bool fleeArmed = false;
 uint32_t fleeArmedUntil = 0;
 
+// A per-device record, not a per-pet one -- like playerId itself (derived
+// from ESP.getEfuseMac(), not saved in `pet`), it persists across egg
+// hatches/blends rather than resetting with the current companion.
+constexpr uint32_t BATTLE_STATS_MAGIC = 0x42535401;  // "BST" + schema 1
+constexpr uint8_t kMaxBattleRivals = 8;
+
+struct BattleRival {
+  uint32_t playerId = 0;
+  uint16_t wins = 0;
+  uint16_t losses = 0;
+};
+
+struct BattleStats {
+  uint32_t magic = 0;
+  uint32_t wins = 0;
+  uint32_t losses = 0;
+  uint32_t fled = 0;
+  uint32_t opponentFled = 0;
+  uint32_t disconnected = 0;
+  uint8_t rivalCount = 0;
+  uint8_t reserved[3]{};
+  BattleRival rivals[kMaxBattleRivals]{};
+};
+
+BattleStats battleStats{};
+
 // Sets `message` and arms drawToastOverlay() to show it as a slide-down
 // banner on whichever of the five main pages is on screen next -- see the
 // comment on `message`'s declaration above.
@@ -855,6 +881,81 @@ void applyTheme() {
 
 void savePet() {
   preferences.putBytes("state", &pet, sizeof(pet));
+}
+
+void saveBattleStats() {
+  preferences.putBytes("battleStats", &battleStats, sizeof(battleStats));
+}
+
+void loadBattleStats() {
+  if (preferences.getBytesLength("battleStats") == sizeof(battleStats)) {
+    preferences.getBytes("battleStats", &battleStats, sizeof(battleStats));
+  }
+  if (battleStats.magic != BATTLE_STATS_MAGIC) {
+    // First boot, or a stored blob from a different (and thus incompatible)
+    // schema -- start clean rather than risk misreading old bytes as a
+    // BattleStats of the current shape.
+    battleStats = BattleStats{};
+    battleStats.magic = BATTLE_STATS_MAGIC;
+  }
+}
+
+// Finds `playerId`'s rival slot, adding a new one if this is a first-time
+// opponent. Once all kMaxBattleRivals slots are full, reuses whichever
+// rival has the fewest recorded battles -- a simple "keep the rivalries
+// you've actually built up" eviction rule rather than tracking timestamps.
+BattleRival &findOrAddRival(uint32_t playerId) {
+  for (uint8_t i = 0; i < battleStats.rivalCount; ++i) {
+    if (battleStats.rivals[i].playerId == playerId) return battleStats.rivals[i];
+  }
+  if (battleStats.rivalCount < kMaxBattleRivals) {
+    BattleRival &rival = battleStats.rivals[battleStats.rivalCount++];
+    rival = BattleRival{};
+    rival.playerId = playerId;
+    return rival;
+  }
+  uint8_t leastIndex = 0;
+  uint32_t leastTotal = 0xFFFFFFFF;
+  for (uint8_t i = 0; i < kMaxBattleRivals; ++i) {
+    const uint32_t total = static_cast<uint32_t>(battleStats.rivals[i].wins) +
+                           battleStats.rivals[i].losses;
+    if (total < leastTotal) {
+      leastTotal = total;
+      leastIndex = i;
+    }
+  }
+  battleStats.rivals[leastIndex] = BattleRival{};
+  battleStats.rivals[leastIndex].playerId = playerId;
+  return battleStats.rivals[leastIndex];
+}
+
+// Called once per battle, on the edge into FamiliarBattleState::Result --
+// see loop()'s battle-state-change handling. Only Victory/Defeat update a
+// specific rival's record: fleeing or disconnecting isn't a decisive result
+// against that opponent, so those only move the aggregate counters.
+void recordBattleOutcome(FamiliarBattleOutcome outcome, uint32_t opponentPlayerId) {
+  switch (outcome) {
+    case FamiliarBattleOutcome::Victory:
+      battleStats.wins++;
+      if (opponentPlayerId) findOrAddRival(opponentPlayerId).wins++;
+      break;
+    case FamiliarBattleOutcome::Defeat:
+      battleStats.losses++;
+      if (opponentPlayerId) findOrAddRival(opponentPlayerId).losses++;
+      break;
+    case FamiliarBattleOutcome::Fled:
+      battleStats.fled++;
+      break;
+    case FamiliarBattleOutcome::OpponentFled:
+      battleStats.opponentFled++;
+      break;
+    case FamiliarBattleOutcome::Disconnected:
+      battleStats.disconnected++;
+      break;
+    default:
+      return;  // None -- shouldn't reach here, but don't spend a flash write on it.
+  }
+  saveBattleStats();
 }
 
 void loadCopiedGenome() {
@@ -2649,6 +2750,10 @@ void drawBattlePage() {
     display->printf("LV 5  HP 35  ATK %u  DEF %u",
                     FamiliarBattleService::deriveAttack(5, pet.stage),
                     FamiliarBattleService::deriveDefense(5, pet.stage));
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(24, 64);
+    display->printf("RECORD %luW-%luL", (unsigned long)battleStats.wins,
+                    (unsigned long)battleStats.losses);
   }
 
   if (state == FamiliarBattleState::Idle) {
@@ -2790,11 +2895,20 @@ void serviceSerialDebug() {
   line.trim();
   if (line == "WHOAMI") {
     Serial.printf("WHOAMI stage=%u age=%lu actions=%lu bodyType=%u lineage=%u "
-                  "design=%016llX\n",
+                  "design=%016llX battleW=%lu battleL=%lu battleFled=%lu "
+                  "battleOppFled=%lu battleDisc=%lu rivals=%u\n",
                   pet.stage, (unsigned long)pet.ageMinutes,
                   (unsigned long)pet.actions, pet.genome.bodyType,
                   pet.genome.lineage,
-                  static_cast<unsigned long long>(petGenomeDesignId(pet.genome)));
+                  static_cast<unsigned long long>(petGenomeDesignId(pet.genome)),
+                  (unsigned long)battleStats.wins, (unsigned long)battleStats.losses,
+                  (unsigned long)battleStats.fled, (unsigned long)battleStats.opponentFled,
+                  (unsigned long)battleStats.disconnected, battleStats.rivalCount);
+    for (uint8_t i = 0; i < battleStats.rivalCount; ++i) {
+      Serial.printf("  rival[%u] id=%08lX W=%u L=%u\n", i,
+                    (unsigned long)battleStats.rivals[i].playerId,
+                    battleStats.rivals[i].wins, battleStats.rivals[i].losses);
+    }
     Serial.flush();
     return;
   }
@@ -2893,6 +3007,23 @@ void serviceSerialDebug() {
     Serial.printf("\nFBDUMP %d %d\n", LCD_WIDTH, LCD_HEIGHT);
     Serial.write(reinterpret_cast<uint8_t *>(pageCanvasB.getFramebuffer()),
                  static_cast<size_t>(LCD_WIDTH) * LCD_HEIGHT * sizeof(uint16_t));
+    Serial.flush();
+    return;
+  }
+  if (line.startsWith("SIMBATTLE")) {
+    // Debug-only: exercises recordBattleOutcome() and its NVS persistence
+    // without a live match -- the same testing gap DUMPBATTLE/DUMPSCAN
+    // cover for rendering, since a real Direct Challenge needs two
+    // physical devices to ever reach FamiliarBattleState::Result at all.
+    // `SIMBATTLE <outcome 1-5> [opponent playerId hex]`; outcome values
+    // match FamiliarBattleOutcome's own numbering (Victory=1, Defeat=2,
+    // Fled=3, OpponentFled=4, Disconnected=5).
+    int outcomeValue = 0;
+    unsigned long opponentId = 0;
+    sscanf(line.c_str(), "SIMBATTLE %d %lx", &outcomeValue, &opponentId);
+    recordBattleOutcome(static_cast<FamiliarBattleOutcome>(outcomeValue),
+                        static_cast<uint32_t>(opponentId));
+    Serial.println("SIMBATTLE recorded");
     Serial.flush();
     return;
   }
@@ -3525,6 +3656,7 @@ void setup() {
   loadSettings();
   loadPet();
   loadCopiedGenome();
+  loadBattleStats();
   applyTheme();
   char genomeSelfTest[PET_GENOME_CODE_LENGTH + 1]{};
   PetGenome decodedSelfTest{};
@@ -3608,6 +3740,13 @@ void loop() {
     battle.update();
     if (battle.state() != lastBattleState || battle.turnNumber() != lastBattleTurn ||
         battle.myHp() != lastBattleMyHp || battle.opponentHp() != lastBattleOpponentHp) {
+      // Edge into Result, not the level -- record exactly once per battle,
+      // using the opponent identity/outcome this same tick still has live
+      // rather than trying to reconstruct it later from saved state.
+      if (battle.state() == FamiliarBattleState::Result &&
+          lastBattleState != FamiliarBattleState::Result) {
+        recordBattleOutcome(battle.outcome(), battle.opponent().playerId);
+      }
       lastBattleState = battle.state();
       lastBattleTurn = battle.turnNumber();
       lastBattleMyHp = battle.myHp();

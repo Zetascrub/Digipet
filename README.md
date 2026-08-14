@@ -18,6 +18,7 @@ artwork or proprietary assets.
 - ES8311 speaker output with configurable volume
 - Hardware diagnostics for the IMU, RTC, power controller, and audio codec
 - Cross-device BLE battles compatible with the included VPet Battle protocol
+- Persistent battle win/loss record and per-rival history, keyed by opponent playerId
 - Runtime SHA-256 player identity generation
 - Persistent procedural companion genomes and ten 2.5D egg lineages
 - Manual signed OTA update checks from the Settings page
