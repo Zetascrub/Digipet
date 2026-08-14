@@ -1,11 +1,33 @@
 #include "familiar_battle_service.h"
 
+#include "familiar_battle_rules.h"
+
 #include <NimBLEAdvertisedDevice.h>
 #include <NimBLEDevice.h>
 #include <NimBLEScan.h>
 #include <WiFi.h>
 #include <algorithm>
 #include <cstring>
+
+// The wire protocol's move/capability values are trusted to line up with
+// familiar_battle_rules.h's mirrors bit-for-bit (see that header's
+// comments) -- both headers are visible here, so check it rather than
+// trust the comments alone.
+static_assert(static_cast<uint8_t>(BattleRulesMove::Attack) ==
+                  static_cast<uint8_t>(FamiliarBattleMove::Attack) &&
+              static_cast<uint8_t>(BattleRulesMove::Defend) ==
+                  static_cast<uint8_t>(FamiliarBattleMove::Defend) &&
+              static_cast<uint8_t>(BattleRulesMove::Special) ==
+                  static_cast<uint8_t>(FamiliarBattleMove::Special) &&
+              static_cast<uint8_t>(BattleRulesMove::Flee) ==
+                  static_cast<uint8_t>(FamiliarBattleMove::Flee),
+              "BattleRulesMove must mirror FamiliarBattleMove");
+static_assert(BattleRulesCapability::BodyType == FamiliarCapBodyType &&
+              BattleRulesCapability::Element == FamiliarCapElement &&
+              BattleRulesCapability::Speed == FamiliarCapSpeed &&
+              BattleRulesCapability::Special == FamiliarCapSpecial &&
+              BattleRulesCapability::MoveMatchups == FamiliarCapMoveMatchups,
+              "BattleRulesCapability must mirror FamiliarBattleCapability");
 
 namespace {
 // Same Nordic UART Service UUID trio chameleon_ultra_client.cpp already
@@ -31,27 +53,13 @@ constexpr uint8_t kMsgCapabilities = 0x03;
 constexpr uint8_t kMsgGenomeChunk = 0x04;
 constexpr uint8_t kCapabilitiesSchema = 1;
 
-uint8_t bodyCombatStyle(uint8_t bodyType) {
-    // Power, Guard, Tactical. Multiple silhouettes may share a style.
-    constexpr uint8_t styles[] = {0, 1, 2, 1, 2};
-    return styles[bodyType % 5];
-}
-
-int matchupPercent(uint8_t attacker, uint8_t defender) {
-    if (attacker == defender) return 100;
-    // Power > Tactical > Guard > Power.
-    return ((attacker == 0 && defender == 2) ||
-            (attacker == 2 && defender == 1) ||
-            (attacker == 1 && defender == 0)) ? 115 : 90;
-}
-
-int elementPercent(uint8_t attacker, uint8_t defender) {
-    if (attacker == defender) return 100;
-    // Fire > Nature > Water > Fire; Electric > Digital > Dark > Electric.
-    constexpr uint8_t beats[] = {2, 0, 1, 5, 3, 4};
-    if (beats[attacker % 6] == defender % 6) return 125;
-    if (beats[defender % 6] == attacker % 6) return 80;
-    return 100;
+BattleRulesCapabilities toRulesCapabilities(const FamiliarBattleCapabilities& capabilities) {
+    BattleRulesCapabilities rules;
+    rules.bodyType = capabilities.bodyType;
+    rules.element = capabilities.element;
+    rules.speed = capabilities.speed;
+    rules.special = capabilities.special;
+    return rules;
 }
 
 FamiliarBattleService* g_owner = nullptr;
@@ -79,17 +87,15 @@ BattleWriteCallbacks battleWriteCallbacks;
 }  // namespace
 
 uint16_t FamiliarBattleService::deriveMaxHp(uint8_t level) {
-    return static_cast<uint16_t>(20 + static_cast<uint16_t>(level) * 3);
+    return battleRulesDeriveMaxHp(level);
 }
 
 uint8_t FamiliarBattleService::deriveAttack(uint8_t level, uint8_t stageIndex) {
-    return static_cast<uint8_t>(std::min<uint16_t>(
-        255, 4 + level + static_cast<uint16_t>(stageIndex) * 2));
+    return battleRulesDeriveAttack(level, stageIndex);
 }
 
 uint8_t FamiliarBattleService::deriveDefense(uint8_t level, uint8_t stageIndex) {
-    return static_cast<uint8_t>(
-        std::min<uint16_t>(255, 2 + level / 2 + stageIndex));
+    return battleRulesDeriveDefense(level, stageIndex);
 }
 
 void FamiliarBattleService::beginRadio() {
@@ -627,91 +633,46 @@ void FamiliarBattleService::submitMove(FamiliarBattleMove move) {
     resolveTurnIfReady();
 }
 
+void FamiliarBattleService::logAction(bool actorIsMe, const BattleRulesActionResult& action) {
+    if (!action.acted) return;  // Defend/Flee, or pre-empted by a Speed win -- no roll, no log.
+    if (action.missed) {
+        addLog(String(actorIsMe ? "You" : "Opp") + ": SPECIAL MISSED");
+        return;
+    }
+    addLog(String(actorIsMe ? "You" : "Opp") + ": " +
+          (action.special ? "SPECIAL" : "ATTACK") + " -" + String(action.damage) + " dmg");
+}
+
 void FamiliarBattleService::resolveTurnIfReady() {
     if (!(myMoveSubmitted_ && opponentMoveSubmitted_)) return;
 
-    // Fixed processing order (lower playerId's move resolves first) so
-    // both devices draw from the shared PRNG in the same sequence.
-    struct Actor {
-        bool isMe;
-        FamiliarBattleMove move;
-    };
-    Actor order[2] = {{true, myMove_}, {false, opponentMove_}};
-    const uint16_t active = negotiatedCapabilities();
-    if (active & FamiliarCapSpeed) {
-        if (myCapabilities_.speed < opponent_.capabilities.speed ||
-            (myCapabilities_.speed == opponent_.capabilities.speed &&
-             myPlayerId_ > opponent_.playerId)) {
-            std::swap(order[0], order[1]);
-        }
-    } else if (myPlayerId_ > opponent_.playerId) {
-        std::swap(order[0], order[1]);
-    }
+    BattleRulesCombatant me;
+    me.playerId = myPlayerId_;
+    me.attack = myAttack_;
+    me.defense = myDefense_;
+    me.capabilities = toRulesCapabilities(myCapabilities_);
+    me.move = static_cast<BattleRulesMove>(myMove_);
 
-    const bool myDefending = (myMove_ == FamiliarBattleMove::Defend);
-    const bool opponentDefending = (opponentMove_ == FamiliarBattleMove::Defend);
+    BattleRulesCombatant opp;
+    opp.playerId = opponent_.playerId;
+    opp.attack = opponentAttack_;
+    opp.defense = opponentDefense_;
+    opp.capabilities = toRulesCapabilities(opponent_.capabilities);
+    opp.move = static_cast<BattleRulesMove>(opponentMove_);
 
-    for (const Actor& actor : order) {
-        if (actor.move != FamiliarBattleMove::Attack &&
-            actor.move != FamiliarBattleMove::Special) {
-            continue;
-        }
-        const uint8_t atk = actor.isMe ? myAttack_ : opponentAttack_;
-        const uint8_t def = actor.isMe ? opponentDefense_ : myDefense_;
-        const bool targetDefending = actor.isMe ? opponentDefending : myDefending;
-        const FamiliarBattleMove targetMove = actor.isMe ? opponentMove_ : myMove_;
-        const uint32_t roll = nextRandom();
-        const bool isSpecial = actor.move == FamiliarBattleMove::Special;
-        if (isSpecial && roll % 100 < 15) {
-            addLog(String(actor.isMe ? "You" : "Opp") + ": SPECIAL MISSED");
-            continue;
-        }
-        int32_t damage = static_cast<int32_t>(atk) - static_cast<int32_t>(def) / 2;
-        if (isSpecial) damage = damage * 3 / 2;
-        if (active & FamiliarCapMoveMatchups) {
-            int movePercent = 100;
-            if (actor.move == FamiliarBattleMove::Attack &&
-                targetMove == FamiliarBattleMove::Special) movePercent = 125;
-            if (actor.move == FamiliarBattleMove::Special &&
-                targetMove == FamiliarBattleMove::Defend) movePercent = 125;
-            damage = damage * movePercent / 100;
-        }
-        if (active & FamiliarCapBodyType) {
-            const uint8_t attackerBody = actor.isMe
-                ? myCapabilities_.bodyType : opponent_.capabilities.bodyType;
-            const uint8_t defenderBody = actor.isMe
-                ? opponent_.capabilities.bodyType : myCapabilities_.bodyType;
-            damage = damage * matchupPercent(bodyCombatStyle(attackerBody),
-                                             bodyCombatStyle(defenderBody)) / 100;
-        }
-        if (active & FamiliarCapElement) {
-            const uint8_t attackerElement = actor.isMe
-                ? myCapabilities_.element : opponent_.capabilities.element;
-            const uint8_t defenderElement = actor.isMe
-                ? opponent_.capabilities.element : myCapabilities_.element;
-            damage = damage * elementPercent(attackerElement, defenderElement) / 100;
-        }
-        if (isSpecial && (active & FamiliarCapSpecial)) {
-            const uint8_t special = actor.isMe
-                ? myCapabilities_.special : opponent_.capabilities.special;
-            damage = damage * (100 + std::min<uint8_t>(special, 100) / 4) / 100;
-        }
-        const int32_t variance = static_cast<int32_t>(roll % 41) - 20;  // +/-20%
-        damage += damage * variance / 100;
-        const bool specialBreaksGuard = (active & FamiliarCapMoveMatchups) &&
-                                        isSpecial && targetDefending;
-        if (targetDefending && !specialBreaksGuard) damage /= 2;
-        if (damage < 1) damage = 1;
+    const BattleRulesTurnResult result = resolveBattleTurn(
+        me, myHp_, opp, opponentHp_, negotiatedCapabilities(), prngState_);
+    myHp_ = result.hpA;
+    opponentHp_ = result.hpB;
 
-        if (actor.isMe) {
-            opponentHp_ = opponentHp_ > damage ? opponentHp_ - damage : 0;
-        } else {
-            myHp_ = myHp_ > damage ? myHp_ - damage : 0;
-        }
-        addLog(String(actor.isMe ? "You" : "Opp") + ": " +
-              (isSpecial ? "SPECIAL" : "ATTACK") + " -" + String(damage) + " dmg");
-        if ((active & FamiliarCapSpeed) &&
-            (myHp_ == 0 || opponentHp_ == 0)) break;
+    // Log in the order the actions actually happened, matching resolveBattleTurn's
+    // own resolution order rather than always "me" first.
+    if (result.aActedFirst) {
+        logAction(true, result.a);
+        logAction(false, result.b);
+    } else {
+        logAction(false, result.b);
+        logAction(true, result.a);
     }
 
     ++turnNumber_;
@@ -728,15 +689,6 @@ void FamiliarBattleService::concludeBattle(FamiliarBattleOutcome outcome) {
     outcome_ = outcome;
     state_ = FamiliarBattleState::Result;
     status_ = "Battle over";
-}
-
-uint32_t FamiliarBattleService::nextRandom() {
-    uint32_t x = prngState_;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    prngState_ = x;
-    return x;
 }
 
 void FamiliarBattleService::addLog(const String& line) {

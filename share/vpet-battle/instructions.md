@@ -19,12 +19,21 @@ lib_deps =
 
 ## Files to copy
 
-Copy both files into your project:
+Copy all four files into your project:
 
 ```text
 include/familiar_battle_service.h
 src/familiar_battle_service.cpp
+include/familiar_battle_rules.h
+src/familiar_battle_rules.cpp
 ```
+
+`familiar_battle_rules.h/.cpp` hold the pure stat formulas, matchup tables,
+and turn-resolution math, with no BLE or Arduino dependency of their own --
+`familiar_battle_service.cpp` calls into them rather than duplicating that
+logic. Kept separate so it can be unit-tested on a host without a board; see
+this repository's own `test/test_battle_rules` for an example suite if you
+want the same coverage in your project.
 
 Then include the header and create one service instance:
 

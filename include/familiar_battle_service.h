@@ -149,8 +149,8 @@ private:
     // it's handled inline wherever a Flee move is seen, not a separate
     // message type.
     void resolveTurnIfReady();
+    void logAction(bool actorIsMe, const struct BattleRulesActionResult& action);
     void concludeBattle(FamiliarBattleOutcome outcome);
-    uint32_t nextRandom();
     void addLog(const String& line);
 
     FamiliarBattleState state_ = FamiliarBattleState::Idle;
