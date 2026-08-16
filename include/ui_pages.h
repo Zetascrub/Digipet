@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Arduino_GFX.h>
 
+#include "color_utils.h"
 #include "familiar_battle_service.h"
 #include "pet_genome.h"
 #include "pin_config.h"
@@ -143,6 +144,14 @@ extern uint8_t pendingHatchMode;
 
 uint16_t scaleRgb565(uint16_t color, uint8_t percent);
 uint16_t lerpRgb565(uint16_t from, uint16_t to, float t);
+// This app's own wrapper around color_utils.h's pickReadableColor(), fixed
+// to this app's light/dark pair. See docs/style-guide.md's "Text and icons
+// on a colored fill" rule: any label/icon drawn on a fill color that isn't
+// COLOR_CARD/COLOR_BACKGROUND itself (a button, a selected-state highlight,
+// a badge) must get its color from this, never a hardcoded COLOR_TEXT --
+// COLOR_TEXT is tuned to read on this app's dark page chrome, and goes
+// close to unreadable against several themes' brighter accent fills.
+uint16_t readableTextColor(uint16_t fillColor);
 // Smoothstep, remapped from an arbitrary [from, to] input range instead of a
 // fixed [0, 1] one -- shared by the boot sequence, the toast slide, and the
 // evolution animation, all in main.cpp, plus this header's own extracted

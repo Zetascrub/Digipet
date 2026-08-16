@@ -91,16 +91,21 @@ continue to use the unchanged core rules.
 `pio run` builds the real firmware; `pio test -e native` runs a separate
 host-native suite covering hardware-independent logic: the genome codec,
 blending, and evolution drift in `pet_genome.cpp` (with a stubbed
-`esp_random()` for determinism, defined in `test/native/fakes`), and the
-Direct Challenge stat formulas, matchup tables, and turn resolution in
-`familiar_battle_rules.cpp`. It never touches the ESP32 toolchain or
-NimBLE/Wi-Fi, so it stays fast and needs no board. CI
-(`.github/workflows/build.yml`) runs both on every push and PR.
+`esp_random()` for determinism, defined in `test/native/fakes`), the Direct
+Challenge stat formulas, matchup tables, and turn resolution in
+`familiar_battle_rules.cpp`, and the contrast-aware label color picker in
+`color_utils.cpp`. It never touches the ESP32 toolchain or NimBLE/Wi-Fi, so
+it stays fast and needs no board. CI (`.github/workflows/build.yml`) runs
+both on every push and PR.
 
-`tools/sim/render.sh <page> [output.png]` renders the Companion/Status/egg
-screens with the real drawing code (`src/ui_pages.cpp`, extracted from
-`main.cpp`) compiled natively, for a visual look at a UI change without
-flashing a board. See `tools/sim/README.md`.
+`tools/sim/render.sh <page> [output.png] [stage] [theme]` renders any page
+with the real drawing code (`src/ui_pages.cpp`, extracted from `main.cpp`)
+compiled natively, for a visual look at a UI change without flashing a
+board — pass `[theme]` (`cyber-mint`/`amber-core`/`violet-link`/
+`mono-signal`) to check it against a specific fixed palette. See
+`tools/sim/README.md` and [`docs/style-guide.md`](docs/style-guide.md) for
+the UI conventions (color/contrast rules especially) a page renderer is
+expected to follow.
 
 ## Repository layout
 

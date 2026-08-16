@@ -125,11 +125,69 @@ void seedTestSettings() {
   settings.themeIndex = 0;
 }
 
+// Mirrors src/main.cpp's applyTheme() `themes[]` table (index 0/AUTO is
+// genome-derived there and has no fixed palette, so isn't offered here) --
+// duplicated rather than shared because main.cpp isn't linked into this
+// harness at all. Lets --theme=N re-point every COLOR_* global the same way
+// the real Settings > Theme picker does, so button-contrast fixes like
+// readableTextColor() can be checked against all 4 fixed themes, not just
+// the Cyber Mint default this file's own globals above are seeded with.
+struct HarnessTheme {
+  const char *name;
+  uint16_t background, card, primary, text, muted, warning, danger, cyan, secondary;
+};
+const HarnessTheme kHarnessThemes[] = {
+    {"cyber-mint", 0x0823, 0x18E8, 0x6718, 0xE73C, 0x8413, 0xFE48, 0xF2CB, 0x269F, 0xA81F},
+    {"amber-core", 0x1000, 0x28C2, 0xFD20, 0xFF9C, 0x9B48, 0xFFE0, 0xF260, 0xFBA0, 0xB940},
+    {"violet-link", 0x080F, 0x2019, 0xC35F, 0xF73F, 0x8C18, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},
+    {"mono-signal", 0x0000, 0x18C3, 0xC618, 0xFFFF, 0x7BEF, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},
+};
+constexpr int kHarnessThemeCount = sizeof(kHarnessThemes) / sizeof(kHarnessThemes[0]);
+
+void applyHarnessTheme(int index) {
+  if (index < 0 || index >= kHarnessThemeCount) {
+    fprintf(stderr, "unknown --theme index %d (0-%d)\n", index, kHarnessThemeCount - 1);
+    exit(1);
+  }
+  const HarnessTheme &t = kHarnessThemes[index];
+  COLOR_BACKGROUND = t.background;
+  COLOR_CARD = t.card;
+  COLOR_MINT = t.primary;
+  COLOR_TEXT = t.text;
+  COLOR_MUTED = t.muted;
+  COLOR_WARNING = t.warning;
+  COLOR_DANGER = t.danger;
+  COLOR_CYAN = t.cyan;
+  COLOR_PURPLE = t.secondary;
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Pull out an optional "--theme=N" or "--theme=name" token from anywhere
+  // in argv, wherever positional [stage]/[resultPage] falls -- it isn't
+  // itself positional, so this runs before the usual argv[1]/[2]/[3] reads.
+  int themeIndex = -1;
+  int outArgc = 0;
+  char *outArgv[16];
+  for (int i = 0; i < argc && outArgc < 16; ++i) {
+    if (strncmp(argv[i], "--theme=", 8) == 0) {
+      const char *value = argv[i] + 8;
+      themeIndex = -1;
+      for (int t = 0; t < kHarnessThemeCount; ++t) {
+        if (strcmp(value, kHarnessThemes[t].name) == 0) themeIndex = t;
+      }
+      if (themeIndex < 0) themeIndex = atoi(value);
+    } else {
+      outArgv[outArgc++] = argv[i];
+    }
+  }
+  argc = outArgc;
+  argv = outArgv;
+
   if (argc < 3) {
-    fprintf(stderr, "usage: %s <%s> <output.ppm> [stage]\n", argv[0], kPageNames);
+    fprintf(stderr, "usage: %s <%s> <output.ppm> [stage] [--theme=N|name]\n", argv[0],
+            kPageNames);
     return 1;
   }
   const char *page = argv[1];
@@ -140,6 +198,7 @@ int main(int argc, char **argv) {
   canvas.begin();
   display = &canvas;
   seedTestSettings();
+  if (themeIndex >= 0) applyHarnessTheme(themeIndex);
 
   if (strcmp(page, "companion") == 0) {
     seedTestPet(stage);

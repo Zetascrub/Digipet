@@ -26,6 +26,10 @@ float bootSmoothstep(float from, float to, float value) {
   return t * t * (3.0f - 2.0f * t);
 }
 
+uint16_t readableTextColor(uint16_t fillColor) {
+  return pickReadableColor(fillColor, COLOR_TEXT, COLOR_BACKGROUND);
+}
+
 void drawCentered(const char *text, int16_t y, uint8_t size, uint16_t color) {
   int16_t x1, y1;
   uint16_t w, h;
@@ -904,12 +908,12 @@ void drawSettingsBack() {
 
 
 void drawChoiceRow(const char *label, int16_t y, bool selected) {
-  display->fillRoundRect(28, y, 312, 48, 14,
-                         selected ? COLOR_PURPLE : COLOR_CARD);
+  const uint16_t fill = selected ? COLOR_PURPLE : COLOR_CARD;
+  display->fillRoundRect(28, y, 312, 48, 14, fill);
   display->drawRoundRect(28, y, 312, 48, 14,
                          selected ? COLOR_MINT : COLOR_MUTED);
   display->setTextSize(2);
-  display->setTextColor(COLOR_TEXT);
+  display->setTextColor(readableTextColor(fill));
   display->setCursor(47, y + 17);
   display->print(label);
   if (selected) {
@@ -933,13 +937,13 @@ void drawSettingsControlPage() {
       const int16_t x = 22 + column * 113;
       const int16_t y = 83 + row * 68;
       const bool selected = settings.brightnessIndex == value;
-      display->fillRoundRect(x, y, 98, 53, 13,
-                             selected ? COLOR_PURPLE : COLOR_CARD);
+      const uint16_t fill = selected ? COLOR_PURPLE : COLOR_CARD;
+      display->fillRoundRect(x, y, 98, 53, 13, fill);
       display->drawRoundRect(x, y, 98, 53, 13,
                              selected ? COLOR_MINT : COLOR_MUTED);
       char percent[8];
       snprintf(percent, sizeof(percent), "%u%%", value * 10);
-      drawCenteredInRect(percent, x, y, 98, 53, 2, COLOR_TEXT);
+      drawCenteredInRect(percent, x, y, 98, 53, 2, readableTextColor(fill));
     }
   } else if (settingsView == SETTINGS_IDLE) {
     for (uint8_t i = 0; i < 4; ++i)
@@ -1026,11 +1030,11 @@ void drawGenomeLabPage() {
     const int16_t x = 11 + i * 119;
     const bool available = mode == 1 || hasCopiedGenome;
     const bool selected = confirming && pendingHatchMode == mode;
-    display->fillRoundRect(x, 378, 108, 46, 13,
-                           !available ? COLOR_MUTED :
-                           (selected ? COLOR_DANGER : COLOR_PURPLE));
+    const uint16_t fill = !available ? COLOR_MUTED :
+                          (selected ? COLOR_DANGER : COLOR_PURPLE);
+    display->fillRoundRect(x, 378, 108, 46, 13, fill);
     drawCenteredInRect(selected ? "CONFIRM" : labels[i], x, 378, 108, 46,
-                       1, COLOR_TEXT);
+                       1, readableTextColor(fill));
   }
   drawPageDots(PAGE_GENOME_LAB);
 }
@@ -1118,10 +1122,11 @@ void drawBattleButton(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius
                       uint16_t color, BattleMoveIcon icon, const char *label) {
   drawPanelGlow(x, y, w, h, radius, color);
   display->fillRoundRect(x, y, w, h, radius, color);
-  drawBattleMoveIcon(icon, x + w / 2 - 16, y + 6, COLOR_TEXT);
+  const uint16_t labelColor = readableTextColor(color);
+  drawBattleMoveIcon(icon, x + w / 2 - 16, y + 6, labelColor);
   display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
-  drawCenteredInRect(label, x, y + h - 20, w, 18, 1, COLOR_TEXT);
+  display->setTextColor(labelColor);
+  drawCenteredInRect(label, x, y + h - 20, w, 18, 1, labelColor);
 }
 
 // Shared "in battle" layout for both the live Battling/Result states and the
@@ -1223,8 +1228,8 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
     display->fillRoundRect(18, 305, 160, 54, 14, COLOR_PURPLE);
     display->fillRoundRect(190, 305, 160, 54, 14, COLOR_CYAN);
     drawCenteredInRect(genomeCopied ? "COPIED" : "COPY GENOME", 18, 305, 160, 54, 1,
-                       COLOR_TEXT);
-    drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, COLOR_BACKGROUND);
+                       readableTextColor(COLOR_PURPLE));
+    drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, readableTextColor(COLOR_CYAN));
   } else {
     drawCentered("TAP TO RETURN", 330, 2, COLOR_CYAN);
   }

@@ -1324,8 +1324,8 @@ void drawGenomeProfilePage() {
 
   display->fillRoundRect(18, 344, 160, 40, 12, COLOR_PURPLE);
   display->fillRoundRect(190, 344, 160, 40, 12, COLOR_CYAN);
-  drawCenteredInRect("EXPORT", 18, 344, 160, 40, 2, COLOR_TEXT);
-  drawCenteredInRect("IMPORT COPY", 190, 344, 160, 40, 1, COLOR_BACKGROUND);
+  drawCenteredInRect("EXPORT", 18, 344, 160, 40, 2, readableTextColor(COLOR_PURPLE));
+  drawCenteredInRect("IMPORT COPY", 190, 344, 160, 40, 1, readableTextColor(COLOR_CYAN));
   display->fillRoundRect(84, 398, 200, 36, 12, COLOR_CARD);
   drawCenteredInRect("BACK", 84, 398, 200, 36, 2, COLOR_TEXT);
 }
@@ -1362,7 +1362,7 @@ void drawPlayerIdPage() {
   display->setCursor(45, 330);
   display->printf("UTC SOURCE: %llu", static_cast<unsigned long long>(playerIdTimestamp));
   display->fillRoundRect(84, 375, 200, 48, 15, COLOR_CYAN);
-  drawCentered("BACK TO SETTINGS", 393, 2, COLOR_BACKGROUND);
+  drawCentered("BACK TO SETTINGS", 393, 2, readableTextColor(COLOR_CYAN));
 }
 
 void presentPlayerIdPage() {
@@ -1441,10 +1441,10 @@ void drawEvolutionDebugPage() {
   drawCentered(pet.stage < 4 ? STAGE_NAMES[pet.stage + 1] : "MAXIMUM STAGE",
                222, 2, pet.stage < 4 ? COLOR_MINT : COLOR_WARNING);
 
-  display->fillRoundRect(48, 296, 272, 58, 16,
-                         pet.stage < 4 ? COLOR_DANGER : COLOR_MUTED);
+  const uint16_t advanceFill = pet.stage < 4 ? COLOR_DANGER : COLOR_MUTED;
+  display->fillRoundRect(48, 296, 272, 58, 16, advanceFill);
   drawCentered(pet.stage < 4 ? "ADVANCE STAGE" : "MAX STAGE", 316, 2,
-               COLOR_TEXT);
+               readableTextColor(advanceFill));
   display->fillRoundRect(92, 375, 184, 47, 14, COLOR_CARD);
   display->drawRoundRect(92, 375, 184, 47, 14, COLOR_CYAN);
   drawCentered("CANCEL", 391, 2, COLOR_TEXT);
