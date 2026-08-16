@@ -43,6 +43,22 @@ bool pmuDetected = true;
 bool codecDetected = true;
 uint8_t i2cDeviceCount = 7;
 
+bool animationFrame = false;
+
+DeviceSettings settings{};
+const char *SLEEP_LABELS[] = {"15 SEC", "30 SEC", "1 MIN", "2 MIN"};
+const char *VOLUME_LABELS[] = {"MUTE", "LOW", "MEDIUM", "HIGH", "MAX"};
+const char *WAKE_LABELS[] = {"TOUCH", "BOOT KEY"};
+const char *THEME_LABELS[] = {"AUTO // PET", "CYBER MINT", "AMBER CORE",
+                              "VIOLET LINK", "MONO SIGNAL"};
+uint8_t settingsGridPage = 0;
+SettingsView settingsView = SETTINGS_HOME;
+
+bool hasCopiedGenome = false;
+bool newEggConfirmation = false;
+uint32_t newEggConfirmationUntil = 0;
+uint8_t pendingHatchMode = 0;
+
 namespace {
 
 void seedTestPet(uint8_t stage) {
@@ -80,12 +96,29 @@ bool writePpm(Arduino_Canvas &canvas, const char *path) {
 
 }  // namespace
 
+namespace {
+
+const char *kPageNames =
+    "companion|status|egg|settings|settings2|"
+    "settings-brightness|settings-idle|settings-volume|settings-wake|"
+    "settings-theme|settings-boot|genomelab";
+
+void seedTestSettings() {
+  settings = DeviceSettings{};
+  settings.brightnessIndex = 7;
+  settings.sleepIndex = 1;
+  settings.soundEnabled = true;
+  settings.bootAnimationEnabled = true;
+  settings.volumeIndex = 3;
+  settings.wakeMode = 0;
+  settings.themeIndex = 0;
+}
+
+}  // namespace
+
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr,
-           "usage: %s <companion|status|egg> <output.ppm> [stage]\n"
-           "  stage defaults to 2 (companion/status) or is forced to 0 (egg)\n",
-           argv[0]);
+    fprintf(stderr, "usage: %s <%s> <output.ppm> [stage]\n", argv[0], kPageNames);
     return 1;
   }
   const char *page = argv[1];
@@ -95,6 +128,7 @@ int main(int argc, char **argv) {
   Arduino_Canvas canvas(LCD_WIDTH, LCD_HEIGHT, nullptr);
   canvas.begin();
   display = &canvas;
+  seedTestSettings();
 
   if (strcmp(page, "companion") == 0) {
     seedTestPet(stage);
@@ -105,8 +139,35 @@ int main(int argc, char **argv) {
   } else if (strcmp(page, "egg") == 0) {
     seedTestPet(0);
     drawCompanionPage();
+  } else if (strcmp(page, "settings") == 0) {
+    seedTestPet(stage);
+    settingsGridPage = 0;
+    settingsView = SETTINGS_HOME;
+    drawSettingsPage();
+  } else if (strcmp(page, "settings2") == 0) {
+    seedTestPet(stage);
+    settingsGridPage = 1;
+    settingsView = SETTINGS_HOME;
+    drawSettingsPage();
+  } else if (strncmp(page, "settings-", 9) == 0) {
+    seedTestPet(stage);
+    const char *sub = page + 9;
+    if (strcmp(sub, "brightness") == 0) settingsView = SETTINGS_BRIGHTNESS;
+    else if (strcmp(sub, "idle") == 0) settingsView = SETTINGS_IDLE;
+    else if (strcmp(sub, "volume") == 0) settingsView = SETTINGS_VOLUME;
+    else if (strcmp(sub, "wake") == 0) settingsView = SETTINGS_WAKE;
+    else if (strcmp(sub, "theme") == 0) settingsView = SETTINGS_THEME;
+    else if (strcmp(sub, "boot") == 0) settingsView = SETTINGS_BOOT;
+    else {
+      fprintf(stderr, "unknown settings sub-view '%s'\n", sub);
+      return 1;
+    }
+    drawSettingsPage();
+  } else if (strcmp(page, "genomelab") == 0) {
+    seedTestPet(stage);
+    drawGenomeLabPage();
   } else {
-    fprintf(stderr, "unknown page '%s' (want companion|status|egg)\n", page);
+    fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;
   }
 

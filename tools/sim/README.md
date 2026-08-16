@@ -1,7 +1,7 @@
 # Native render harness
 
-Renders the Companion, Status, and egg-stage screens using the *real*
-production drawing code (`src/ui_pages.cpp`, extracted verbatim from
+Renders the Companion, Status, Settings, and Genome Lab screens using the
+*real* production drawing code (`src/ui_pages.cpp`, extracted verbatim from
 `main.cpp`) compiled for the host instead of the ESP32 -- no board, no
 flash cycle. Useful for visually reviewing a UI change before flashing, or
 for generating reference images to compare across changes.
@@ -12,6 +12,15 @@ for generating reference images to compare across changes.
 tools/sim/render.sh companion /tmp/companion.png     # stage defaults to 2
 tools/sim/render.sh status /tmp/status.png 4          # stage 4 = Titan
 tools/sim/render.sh egg /tmp/egg.png                  # always stage 0
+tools/sim/render.sh settings /tmp/settings.png        # home grid, page 1/2
+tools/sim/render.sh settings2 /tmp/settings2.png      # home grid, page 2/2
+tools/sim/render.sh settings-brightness /tmp/b.png    # any settingsView sub-view:
+tools/sim/render.sh settings-idle /tmp/i.png          #   brightness|idle|volume|
+tools/sim/render.sh settings-volume /tmp/v.png        #   wake|theme|boot
+tools/sim/render.sh settings-wake /tmp/w.png
+tools/sim/render.sh settings-theme /tmp/t.png
+tools/sim/render.sh settings-boot /tmp/o.png
+tools/sim/render.sh genomelab /tmp/genomelab.png
 ```
 
 Output is a real PNG at the panel's native 368x448, pixel-accurate RGB565
@@ -49,12 +58,13 @@ resulting canvas to a PPM (converted to PNG by `render.sh` via Pillow).
 
 ## Extending to more pages
 
-Currently covers Companion, Status, and the egg-stage Companion screen.
-Battle/Settings/Genome Lab/boot sequence aren't extracted yet -- they're
-bigger asks (Battle needs a renderable `FamiliarBattleService` stand-in;
+Currently covers Companion (all 5 stages and all 5 body types' procedural
+creature rendering), Status, the egg-stage Companion screen (all 10 egg
+lineages), Settings (both home grid pages and all 6 settingsView
+sub-views), and Genome Lab. Battle and the boot sequence aren't extracted
+yet -- Battle needs a renderable `FamiliarBattleService` stand-in, and the
 boot sequence is inherently animated-over-time rather than one static
-frame) and were deliberately left for a follow-up rather than done in one
-pass. To extend:
+frame, both bigger asks deliberately left for a follow-up. To extend:
 
 1. Identify the page function's dependencies the same way this pass did:
    `grep` the function body for globals it reads that aren't already

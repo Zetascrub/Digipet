@@ -68,17 +68,6 @@ I2SClass audioI2S;
 PetState pet;
 FamiliarBattleService battle;
 
-struct DeviceSettings {
-  uint32_t magic;
-  uint8_t brightnessIndex;
-  uint8_t sleepIndex;
-  bool soundEnabled;
-  bool bootAnimationEnabled;
-  uint8_t volumeIndex;
-  uint8_t wakeMode;
-  uint8_t themeIndex;
-};
-
 DeviceSettings settings;
 const uint32_t SLEEP_TIMEOUTS[] = {15000, 30000, 60000, 120000};
 const char *SLEEP_LABELS[] = {"15 SEC", "30 SEC", "1 MIN", "2 MIN"};
@@ -89,22 +78,12 @@ const char *THEME_LABELS[] = {"AUTO // PET", "CYBER MINT", "AMBER CORE",
                               "VIOLET LINK", "MONO SIGNAL"};
 uint8_t settingsGridPage = 0;
 
-uint8_t brightnessPercent() { return settings.brightnessIndex * 10; }
 uint8_t brightnessLevel() {
   // Keep the 0% choice barely visible so it can always be changed again.
   return settings.brightnessIndex == 0 ? 8 :
       static_cast<uint8_t>(settings.brightnessIndex * 255 / 10);
 }
 
-enum SettingsView : uint8_t {
-  SETTINGS_HOME,
-  SETTINGS_BRIGHTNESS,
-  SETTINGS_IDLE,
-  SETTINGS_VOLUME,
-  SETTINGS_WAKE,
-  SETTINGS_THEME,
-  SETTINGS_BOOT,
-};
 SettingsView settingsView = SETTINGS_HOME;
 
 uint32_t lastMinute = 0;
@@ -1314,227 +1293,6 @@ void detectHardware() {
 void flashPressedHighlight(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius) {
   display->drawRoundRect(x, y, w, h, radius, RGB565_WHITE);
   display->drawRoundRect(x + 1, y + 1, w - 2, h - 2, max<int16_t>(1, radius - 1), RGB565_WHITE);
-}
-
-void drawSettingsIcon(uint8_t item, int16_t cx, int16_t cy, uint16_t color) {
-  switch (item) {
-    case 0:  // brightness
-      display->drawCircle(cx, cy, 15, color);
-      display->fillCircle(cx, cy, 8, color);
-      for (uint8_t i = 0; i < 8; ++i) {
-        const float angle = i * 0.785398f;
-        display->drawLine(cx + lroundf(cosf(angle) * 20), cy + lroundf(sinf(angle) * 20),
-                          cx + lroundf(cosf(angle) * 27), cy + lroundf(sinf(angle) * 27), color);
-      }
-      break;
-    case 1:  // idle timer
-      display->drawCircle(cx, cy, 24, color);
-      display->drawLine(cx, cy, cx, cy - 14, color);
-      display->drawLine(cx, cy, cx + 12, cy + 7, color);
-      break;
-    case 2:  // speaker
-      display->fillRect(cx - 25, cy - 9, 12, 18, color);
-      display->fillTriangle(cx - 13, cy - 9, cx + 3, cy - 22, cx + 3, cy + 22, color);
-      display->drawCircle(cx + 3, cy, 17, color);
-      display->drawCircle(cx + 3, cy, 25, color);
-      break;
-    case 3:  // wake
-      display->drawCircle(cx, cy, 24, color);
-      display->fillCircle(cx, cy, 7, color);
-      display->drawLine(cx, cy - 8, cx, cy - 27, color);
-      display->drawLine(cx - 20, cy + 16, cx - 29, cy + 23, color);
-      display->drawLine(cx + 20, cy + 16, cx + 29, cy + 23, color);
-      break;
-    case 4:  // theme palette
-      display->drawCircle(cx, cy, 25, color);
-      display->fillCircle(cx - 10, cy - 8, 5, COLOR_CYAN);
-      display->fillCircle(cx + 8, cy - 11, 5, COLOR_PURPLE);
-      display->fillCircle(cx + 13, cy + 7, 5, COLOR_WARNING);
-      display->fillCircle(cx - 7, cy + 12, 5, COLOR_MINT);
-      break;
-    case 5:  // boot effect
-      display->drawLine(cx, cy - 28, cx, cy + 28, color);
-      display->drawLine(cx - 28, cy, cx + 28, cy, color);
-      display->drawLine(cx - 19, cy - 19, cx + 19, cy + 19, color);
-      display->drawLine(cx + 19, cy - 19, cx - 19, cy + 19, color);
-      display->fillCircle(cx, cy, 8, color);
-      break;
-    case 6:  // identity card
-      display->drawRoundRect(cx - 28, cy - 20, 56, 40, 6, color);
-      display->fillCircle(cx - 14, cy - 5, 7, color);
-      display->drawLine(cx - 23, cy + 12, cx - 5, cy + 12, color);
-      display->drawLine(cx + 3, cy - 8, cx + 20, cy - 8, color);
-      display->drawLine(cx + 3, cy + 2, cx + 20, cy + 2, color);
-      break;
-    default:  // update
-      display->drawLine(cx, cy - 25, cx, cy + 13, color);
-      display->fillTriangle(cx - 15, cy + 4, cx + 15, cy + 4, cx, cy + 23, color);
-      display->drawLine(cx - 25, cy + 28, cx + 25, cy + 28, color);
-      break;
-  }
-}
-
-void drawSettingsTile(uint8_t item, int16_t x, int16_t y,
-                      const char *label, const char *value) {
-  const uint16_t accent = item & 1 ? COLOR_PURPLE : COLOR_CYAN;
-  drawPanelGlow(x, y, 160, 137, 20, accent);
-  display->fillRoundRect(x, y, 160, 137, 20, COLOR_CARD);
-  display->drawRoundRect(x, y, 160, 137, 20, accent);
-  drawSettingsIcon(item, x + 80, y + 43, COLOR_MINT);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(x + 16, y + 82);
-  display->print(label);
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(x + 16, y + 104);
-  display->print(value);
-}
-
-void drawCenteredInRect(const char *text, int16_t x, int16_t y,
-                        int16_t width, int16_t height, uint8_t size,
-                        uint16_t color) {
-  int16_t x1, y1;
-  uint16_t textWidth, textHeight;
-  display->setTextSize(size);
-  display->getTextBounds(text, 0, 0, &x1, &y1, &textWidth, &textHeight);
-  display->setTextColor(color);
-  display->setCursor(x + (width - textWidth) / 2, y + (height - textHeight) / 2);
-  display->print(text);
-}
-
-void drawSettingsBack() {
-  drawPanelGlow(84, 385, 200, 43, 14, COLOR_CYAN);
-  display->fillRoundRect(84, 385, 200, 43, 14, COLOR_CARD);
-  display->drawRoundRect(84, 385, 200, 43, 14, COLOR_CYAN);
-  drawCenteredInRect("<  BACK", 84, 385, 200, 43, 2, COLOR_TEXT);
-}
-
-void drawChoiceRow(const char *label, int16_t y, bool selected) {
-  display->fillRoundRect(28, y, 312, 48, 14,
-                         selected ? COLOR_PURPLE : COLOR_CARD);
-  display->drawRoundRect(28, y, 312, 48, 14,
-                         selected ? COLOR_MINT : COLOR_MUTED);
-  display->setTextSize(2);
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(47, y + 17);
-  display->print(label);
-  if (selected) {
-    display->fillCircle(316, y + 24, 8, COLOR_MINT);
-    display->fillCircle(316, y + 24, 3, COLOR_BACKGROUND);
-  }
-}
-
-void drawSettingsControlPage() {
-  paintPageBackdrop();
-  const char *titles[] = {"SETTINGS", "BRIGHTNESS", "IDLE TIMER", "VOLUME",
-                          "WAKE MODE", "THEME", "BOOT EFFECT"};
-  drawCentered(titles[settingsView], 18, 3, COLOR_MINT);
-  drawCentered("SELECT AN OPTION", 51, 1, COLOR_CYAN);
-
-  if (settingsView == SETTINGS_BRIGHTNESS) {
-    for (uint8_t value = 0; value <= 10; ++value) {
-      const uint8_t column = value % 3;
-      const uint8_t row = value / 3;
-      const int16_t x = 22 + column * 113;
-      const int16_t y = 83 + row * 68;
-      const bool selected = settings.brightnessIndex == value;
-      display->fillRoundRect(x, y, 98, 53, 13,
-                             selected ? COLOR_PURPLE : COLOR_CARD);
-      display->drawRoundRect(x, y, 98, 53, 13,
-                             selected ? COLOR_MINT : COLOR_MUTED);
-      char percent[8];
-      snprintf(percent, sizeof(percent), "%u%%", value * 10);
-      drawCenteredInRect(percent, x, y, 98, 53, 2, COLOR_TEXT);
-    }
-  } else if (settingsView == SETTINGS_IDLE) {
-    for (uint8_t i = 0; i < 4; ++i)
-      drawChoiceRow(SLEEP_LABELS[i], 89 + i * 62, settings.sleepIndex == i);
-  } else if (settingsView == SETTINGS_VOLUME) {
-    for (uint8_t i = 0; i < 5; ++i)
-      drawChoiceRow(VOLUME_LABELS[i], 78 + i * 57, settings.volumeIndex == i);
-  } else if (settingsView == SETTINGS_WAKE) {
-    drawChoiceRow("TOUCH TO WAKE", 121, settings.wakeMode == 0);
-    drawChoiceRow("BOOT KEY TO WAKE", 190, settings.wakeMode == 1);
-  } else if (settingsView == SETTINGS_THEME) {
-    for (uint8_t i = 0; i < 5; ++i)
-      drawChoiceRow(THEME_LABELS[i], 78 + i * 57, settings.themeIndex == i);
-  } else if (settingsView == SETTINGS_BOOT) {
-    drawChoiceRow("BOOT EFFECT ON", 130, settings.bootAnimationEnabled);
-    drawChoiceRow("BOOT EFFECT OFF", 199, !settings.bootAnimationEnabled);
-  }
-  drawSettingsBack();
-}
-
-void drawSettingsPage() {
-  if (settingsView != SETTINGS_HOME) {
-    drawSettingsControlPage();
-    return;
-  }
-  paintPageBackdrop();
-  drawCentered("DEVICE SETTINGS", 18, 3, COLOR_MINT);
-  drawCentered(settingsGridPage == 0 ? "CORE CONTROLS // SWIPE UP" :
-                                      "SYSTEM OPTIONS // SWIPE DOWN",
-               50, 1, COLOR_CYAN);
-
-  if (settingsGridPage == 0) {
-    char brightness[12];
-    snprintf(brightness, sizeof(brightness), "%u%%", brightnessPercent());
-    drawSettingsTile(0, 18, 78, "BRIGHTNESS", brightness);
-    drawSettingsTile(1, 190, 78, "IDLE TIMER", SLEEP_LABELS[settings.sleepIndex]);
-    drawSettingsTile(2, 18, 227, "VOLUME", VOLUME_LABELS[settings.volumeIndex]);
-    drawSettingsTile(3, 190, 227, "WAKE MODE", WAKE_LABELS[settings.wakeMode]);
-  } else {
-    drawSettingsTile(4, 18, 78, "THEME", THEME_LABELS[settings.themeIndex]);
-    drawSettingsTile(5, 190, 78, "BOOT EFFECT", settings.bootAnimationEnabled ? "ENABLED" : "DISABLED");
-    drawSettingsTile(6, 18, 227, "PLAYER ID", "VIEW IDENTITY");
-    drawSettingsTile(7, 190, 227, "FIRMWARE", "CHECK UPDATE");
-  }
-  drawCentered(settingsGridPage == 0 ? "1  /  2" : "2  /  2", 382, 1, COLOR_MUTED);
-  drawPageDots(PAGE_SETTINGS);
-}
-
-void drawGenomeLabPage() {
-  static const char *bodyNames[] = {"QUADRUPED", "HUMANOID", "AVIAN", "BLOB", "SERPENT"};
-  static const char *temperaments[] = {"CALM", "BOLD", "CURIOUS", "LOYAL", "WILD", "CLEVER"};
-  paintPageBackdrop();
-  drawCentered("GENOME LAB", 15, 3, COLOR_MINT);
-  drawCentered(hasCopiedGenome ? "COPIED GENOME READY" :
-                                "IMPORT A GENOME TO CLONE OR BLEND",
-               48, 1, COLOR_CYAN);
-
-  drawPanelGlow(20, 74, 328, 244, 28, COLOR_PURPLE);
-  display->drawRoundRect(20, 74, 328, 244, 28, COLOR_CARD);
-  display->drawRoundRect(27, 81, 314, 230, 23, COLOR_PURPLE);
-  drawEgg(animationFrame, COLOR_BACKGROUND);
-
-  char fingerprint[28];
-  snprintf(fingerprint, sizeof(fingerprint), "DESIGN %016llX",
-           static_cast<unsigned long long>(petGenomeDesignId(pet.genome)));
-  display->fillRoundRect(22, 325, 324, 43, 13, COLOR_CARD);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(34, 337);
-  display->printf("%s  //  %s", eggLineageName(pet.genome.lineage),
-                  elementName(pet.genome.element));
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(34, 352);
-  display->printf("%s  %s  %s", bodyNames[pet.genome.bodyType % 5],
-                  temperaments[pet.genome.temperament % 6], fingerprint);
-
-  const bool confirming = newEggConfirmation && millis() < newEggConfirmationUntil;
-  const char *labels[] = {"RANDOM", "CLONE", "BLEND"};
-  for (uint8_t i = 0; i < 3; ++i) {
-    const uint8_t mode = i + 1;
-    const int16_t x = 11 + i * 119;
-    const bool available = mode == 1 || hasCopiedGenome;
-    const bool selected = confirming && pendingHatchMode == mode;
-    display->fillRoundRect(x, 378, 108, 46, 13,
-                           !available ? COLOR_MUTED :
-                           (selected ? COLOR_DANGER : COLOR_PURPLE));
-    drawCenteredInRect(selected ? "CONFIRM" : labels[i], x, 378, 108, 46,
-                       1, COLOR_TEXT);
-  }
-  drawPageDots(PAGE_GENOME_LAB);
 }
 
 void beginNewEgg(uint8_t mode) {

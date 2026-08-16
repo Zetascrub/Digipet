@@ -75,6 +75,43 @@ extern bool pmuDetected;
 extern bool codecDetected;
 extern uint8_t i2cDeviceCount;
 
+extern bool animationFrame;
+
+struct DeviceSettings {
+  uint32_t magic;
+  uint8_t brightnessIndex;
+  uint8_t sleepIndex;
+  bool soundEnabled;
+  bool bootAnimationEnabled;
+  uint8_t volumeIndex;
+  uint8_t wakeMode;
+  uint8_t themeIndex;
+};
+extern DeviceSettings settings;
+
+extern const char *SLEEP_LABELS[];
+extern const char *VOLUME_LABELS[];
+extern const char *WAKE_LABELS[];
+extern const char *THEME_LABELS[];
+extern uint8_t settingsGridPage;
+uint8_t brightnessPercent();
+
+enum SettingsView : uint8_t {
+  SETTINGS_HOME,
+  SETTINGS_BRIGHTNESS,
+  SETTINGS_IDLE,
+  SETTINGS_VOLUME,
+  SETTINGS_WAKE,
+  SETTINGS_THEME,
+  SETTINGS_BOOT,
+};
+extern SettingsView settingsView;
+
+extern bool hasCopiedGenome;
+extern bool newEggConfirmation;
+extern uint32_t newEggConfirmationUntil;
+extern uint8_t pendingHatchMode;
+
 // --- Color/easing helpers ------------------------------------------------------
 
 uint16_t scaleRgb565(uint16_t color, uint8_t percent);
@@ -124,7 +161,18 @@ void drawCreaturePortrait(const PetGenome &genome, uint8_t stage, int cx, int cy
 void drawProceduralCreature(bool asleep);
 void drawCreature(bool frame, bool asleep);
 
+// --- Settings ------------------------------------------------------------------
+
+void drawSettingsIcon(uint8_t item, int16_t cx, int16_t cy, uint16_t color);
+void drawSettingsTile(uint8_t item, int16_t x, int16_t y, const char *label,
+                      const char *value);
+void drawSettingsBack();
+void drawChoiceRow(const char *label, int16_t y, bool selected);
+void drawSettingsControlPage();
+
 // --- Pages --------------------------------------------------------------------
 
 void drawCompanionPage();
 void drawStatusPage();
+void drawSettingsPage();
+void drawGenomeLabPage();
