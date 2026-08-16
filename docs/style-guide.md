@@ -23,6 +23,19 @@ Theme, which is what makes theme switching work at all — a hardcoded color
 anywhere in a page renderer is invisible on 4 of the app's 5 themes' worth
 of testing and a guaranteed readability bug on at least one of them.
 
+The four fixed themes' actual RGB565 values live in exactly one place:
+`kThemes[]` (`include/ui_pages.h`). `applyTheme()` reads it to switch
+themes, the Settings > Theme picker's preview swatches read it to show what
+a theme looks like before it's selected, and `tools/sim`'s render harness
+reads it for `--theme=`. If you need a theme's literal colors for anything
+— a preview, a test, a one-off tool — read them from `kThemes[]`; don't
+retype the hex values a second time. Two hand-copied tables agreeing today
+is luck, not a guarantee — `kThemes[]` replaced what used to be two
+separate copies of the same nine hex values (`applyTheme()`'s own table and
+the render harness's) precisely so a third copy — the Theme picker's
+preview swatches, added alongside `kThemes[]` itself — didn't have to
+become a third place to keep in sync by hand.
+
 | Global | Role |
 |---|---|
 | `COLOR_BACKGROUND` | Page backdrop |
@@ -118,13 +131,55 @@ above — a page title sits on the plain backdrop, not a colored fill — but
 keep the same instinct: if a title or subtitle ever gets a colored panel
 behind it instead of the plain backdrop, it needs `readableTextColor()` too.
 
+## Transitions
+
+Every full-frame transition in the app — page swipes, Settings sub-view
+pushes, Settings brightness-grid paging, and full-screen overlays opening
+or closing (Genome Profile, Player ID, Rivals, Evolution Debug) — goes
+through one function: `playSlideTransition()` (`src/main.cpp`). It composes
+an outgoing and incoming frame into a single eased slide (smoothstep,
+`frameCount` steps at `frameTimeMs` each, adaptively paced against however
+long the panel blit itself actually takes) and is the only place that owns
+that curve. A new full-frame UI change should render its outgoing/incoming
+frames into `pageCanvasA`/`pageCanvasB` and hand them to it rather than
+inventing a second transition style — that's what keeps every swipe in the
+app feeling like the same app.
+
+**Overlays specifically:** a full-screen overlay (something opened by a tap
+that covers the whole display and is dismissed back to whatever was
+underneath — the pattern Genome Profile/Player ID/Rivals/Evolution Debug
+all follow) opens via `presentOverlayEntrance(fromPage, drawOverlay)` and
+closes via `presentOverlayExit(drawOverlay, toPage)`, both in
+`src/main.cpp`. Don't hard-cut an overlay open/closed with a plain
+`renderPageToCanvas()` + blit — that was the state of all four of these
+before this convention existed, and the instant pop-in read as
+inconsistent next to every other transition in the app sliding smoothly.
+The one deliberate exception is the OTA Update screen's repeated
+in-progress redraws (`presentUpdatePage()`): those aren't opening or
+closing anything, just refreshing a percentage in place many times a
+second, so they stay a hard blit — see that call site's own comment before
+changing it.
+
+## Previewing a set of choices
+
+If a picker lets the user choose among a small fixed set of *visual*
+options — so far, only Settings > Theme, but the same would apply to a
+future icon pack or color-accent picker — show what each option actually
+looks like on the choice row itself, not just its name. `drawThemeSwatch()`
+(`src/ui_pages.cpp`) is the existing example: four small dots of that
+theme's own accent colors, read from `kThemes[]`, next to each row's label.
+Before it existed, "AMBER CORE" vs. "VIOLET LINK" was a guess from the name
+alone. A label-only list is the same failure mode as this file's central
+contrast rule, one level up: making the user reason about what a color
+choice will look like instead of just showing them.
+
 ## Verifying a UI change
 
 `tools/sim/`'s native render harness (see `tools/sim/README.md`) renders
 real page-drawing code to PNG without a physical board, and now takes an
 optional `--theme=` flag (`cyber-mint`/`amber-core`/`violet-link`/
-`mono-signal`, or a 0–3 index) that re-points every `COLOR_*` global the
-same way Settings > Theme does:
+`mono-signal`, or a `kThemes[]` index 1–4) that re-points every `COLOR_*`
+global the same way Settings > Theme does:
 
 ```bash
 tools/sim/render.sh battle-fight /tmp/battle.png 2 amber-core
@@ -139,9 +194,14 @@ were actually found — by rendering, not by reasoning about hex values.
 ## Checklist for a new button/tile/badge
 
 1. Fill comes from a `COLOR_*` global or a value derived from one — never a
-   literal RGB565 constant.
+   literal RGB565 constant. If it needs a fixed theme's literal colors,
+   they come from `kThemes[]`, not a retyped copy.
 2. If the fill isn't `COLOR_BACKGROUND`/`COLOR_CARD`, its label/icon color is
    `readableTextColor(fill)`, not `COLOR_TEXT`.
 3. Selected/unselected (or available/unavailable) states swap both fill and
    outline color together.
-4. Rendered and eyeballed across all 4 fixed themes via the render harness.
+4. A new full-screen overlay opens/closes through `presentOverlayEntrance()`/
+   `presentOverlayExit()`, not a hard cut.
+5. A picker among visual options (a theme, an icon set, ...) previews each
+   option rather than naming it.
+6. Rendered and eyeballed across all 4 fixed themes via the render harness.

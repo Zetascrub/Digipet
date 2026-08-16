@@ -124,6 +124,33 @@ extern const char *THEME_LABELS[];
 extern uint8_t settingsGridPage;
 uint8_t brightnessPercent();
 
+// Canonical color tables for the app's 5 themes, index-aligned with
+// THEME_LABELS/settings.themeIndex. Index 0 (AUTO) has no fixed palette --
+// it's derived per-pet from paletteForGenome() instead (see applyTheme()
+// and drawSettingsControlPage()'s own handling of it) -- so its entry here
+// is a placeholder, not a color to draw with.
+//
+// This is the one place this data lives, specifically so it can't drift
+// out of sync with itself: applyTheme() (src/main.cpp) reads it to actually
+// switch themes, the Settings > Theme picker's preview swatches
+// (drawSettingsControlPage(), ui_pages.cpp) read it to show what a theme
+// looks like before it's selected, and tools/sim's render harness reads it
+// for its --theme= flag. A `constexpr` array in a header gives every
+// translation unit that includes this file its own copy, but they're all
+// generated from this same literal, so there's no risk of the copies
+// disagreeing the way three hand-maintained ones could.
+struct ThemeColors {
+  uint16_t background, card, primary, text, muted, warning, danger, cyan, secondary;
+};
+constexpr ThemeColors kThemes[] = {
+    {0, 0, 0, 0, 0, 0, 0, 0, 0},  // AUTO -- see comment above.
+    {0x0823, 0x18E8, 0x6718, 0xE73C, 0x8413, 0xFE48, 0xF2CB, 0x269F, 0xA81F},  // Cyber Mint
+    {0x1000, 0x28C2, 0xFD20, 0xFF9C, 0x9B48, 0xFFE0, 0xF260, 0xFBA0, 0xB940},  // Amber Core
+    {0x080F, 0x2019, 0xC35F, 0xF73F, 0x8C18, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},  // Violet Link
+    {0x0000, 0x18C3, 0xC618, 0xFFFF, 0x7BEF, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},  // Mono Signal
+};
+constexpr int kThemeCount = sizeof(kThemes) / sizeof(kThemes[0]);
+
 enum SettingsView : uint8_t {
   SETTINGS_HOME,
   SETTINGS_BRIGHTNESS,
@@ -238,6 +265,7 @@ void drawSettingsTile(uint8_t item, int16_t x, int16_t y, const char *label,
                       const char *value);
 void drawSettingsBack();
 void drawChoiceRow(const char *label, int16_t y, bool selected);
+void drawThemeSwatch(int16_t cx, int16_t cy, uint8_t themeIndex);
 void drawSettingsControlPage();
 
 // --- Pages --------------------------------------------------------------------

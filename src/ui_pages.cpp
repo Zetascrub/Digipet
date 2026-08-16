@@ -922,6 +922,35 @@ void drawChoiceRow(const char *label, int16_t y, bool selected) {
   }
 }
 
+// Four small preview dots (cyan/purple/warning/mint, the same color order
+// as the "theme palette" Settings-home tile icon -- drawSettingsIcon()'s
+// case 4) so picking a theme from THEME_LABELS' plain names on the Theme
+// choice row isn't a blind guess at what it actually looks like. AUTO
+// (themeIndex 0) has no fixed palette of its own -- see kThemes' own
+// comment in ui_pages.h -- so it previews the current pet's own
+// genome-derived colors instead, matching what AUTO actually resolves to
+// via applyTheme().
+void drawThemeSwatch(int16_t cx, int16_t cy, uint8_t themeIndex) {
+  uint16_t cyan, purple, warning, mint;
+  if (themeIndex == 0) {
+    const PetPalette palette = paletteForGenome(pet.genome);
+    cyan = palette.glow;
+    purple = palette.secondary;
+    warning = palette.accent;
+    mint = palette.primaryLight;
+  } else {
+    const ThemeColors &theme = kThemes[themeIndex];
+    cyan = theme.cyan;
+    purple = theme.secondary;
+    warning = theme.warning;
+    mint = theme.primary;
+  }
+  const uint16_t colors[4] = {cyan, purple, warning, mint};
+  for (uint8_t i = 0; i < 4; ++i) {
+    display->fillCircle(cx + i * 14, cy, 5, colors[i]);
+  }
+}
+
 
 void drawSettingsControlPage() {
   paintPageBackdrop();
@@ -955,8 +984,11 @@ void drawSettingsControlPage() {
     drawChoiceRow("TOUCH TO WAKE", 121, settings.wakeMode == 0);
     drawChoiceRow("BOOT KEY TO WAKE", 190, settings.wakeMode == 1);
   } else if (settingsView == SETTINGS_THEME) {
-    for (uint8_t i = 0; i < 5; ++i)
-      drawChoiceRow(THEME_LABELS[i], 78 + i * 57, settings.themeIndex == i);
+    for (uint8_t i = 0; i < 5; ++i) {
+      const int16_t y = 78 + i * 57;
+      drawChoiceRow(THEME_LABELS[i], y, settings.themeIndex == i);
+      drawThemeSwatch(240, y + 24, i);
+    }
   } else if (settingsView == SETTINGS_BOOT) {
     drawChoiceRow("BOOT EFFECT ON", 130, settings.bootAnimationEnabled);
     drawChoiceRow("BOOT EFFECT OFF", 199, !settings.bootAnimationEnabled);

@@ -192,6 +192,8 @@ Page genomeProfileReturnPage = PAGE_COMPANION;
 void presentCoherentPageFrame(Page page);
 void transitionSettingsView(SettingsView target, bool forward);
 void transitionSettingsGrid(uint8_t target);
+void presentOverlayEntrance(Page fromPage, void (*drawOverlay)());
+void presentOverlayExit(void (*drawOverlay)(), Page toPage);
 Page currentPage = PAGE_COMPANION;
 FamiliarBattleState lastBattleState = FamiliarBattleState::Idle;
 uint16_t lastBattleTurn = 0;
@@ -762,18 +764,6 @@ uint8_t subtractClamped(uint8_t value, uint8_t amount) {
 }
 
 void applyTheme() {
-  struct ThemeColors {
-    uint16_t background, card, primary, text, muted;
-    uint16_t warning, danger, cyan, secondary;
-  };
-  static constexpr ThemeColors themes[] = {
-      {0, 0, 0, 0, 0, 0, 0, 0, 0},  // AUTO is derived below.
-      {0x0823, 0x18E8, 0x6718, 0xE73C, 0x8413, 0xFE48, 0xF2CB, 0x269F, 0xA81F},
-      {0x1000, 0x28C2, 0xFD20, 0xFF9C, 0x9B48, 0xFFE0, 0xF260, 0xFBA0, 0xB940},
-      {0x080F, 0x2019, 0xC35F, 0xF73F, 0x8C18, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},
-      {0x0000, 0x18C3, 0xC618, 0xFFFF, 0x7BEF, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},
-  };
-
   if (settings.themeIndex == 0) {
     const PetPalette petPalette = paletteForGenome(pet.genome);
     COLOR_BACKGROUND = scaleRgb565(petPalette.primaryDark, 22);
@@ -788,7 +778,7 @@ void applyTheme() {
     return;
   }
 
-  const ThemeColors &theme = themes[settings.themeIndex];
+  const ThemeColors &theme = kThemes[settings.themeIndex];
   COLOR_BACKGROUND = theme.background;
   COLOR_CARD = theme.card;
   COLOR_MINT = theme.primary;
@@ -1365,30 +1355,6 @@ void drawPlayerIdPage() {
   drawCentered("BACK TO SETTINGS", 393, 2, readableTextColor(COLOR_CYAN));
 }
 
-void presentPlayerIdPage() {
-  if (transitionsReady) {
-    Arduino_GFX *previousDisplay = display;
-    display = &pageCanvasA;
-    drawPlayerIdPage();
-    display = previousDisplay;
-    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
-  } else {
-    drawPlayerIdPage();
-  }
-}
-
-void presentRivalsPage() {
-  if (transitionsReady) {
-    Arduino_GFX *previousDisplay = display;
-    display = &pageCanvasA;
-    drawRivalsPage();
-    display = previousDisplay;
-    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
-  } else {
-    drawRivalsPage();
-  }
-}
-
 void drawUpdatePage(const char *status, int progress) {
   paintPageBackdrop();
   drawCentered("SIGNED UPDATE", 30, 3, COLOR_MINT);
@@ -1448,19 +1414,6 @@ void drawEvolutionDebugPage() {
   display->fillRoundRect(92, 375, 184, 47, 14, COLOR_CARD);
   display->drawRoundRect(92, 375, 184, 47, 14, COLOR_CYAN);
   drawCentered("CANCEL", 391, 2, COLOR_TEXT);
-}
-
-void presentEvolutionDebugPage() {
-  if (transitionsReady) {
-    Arduino_GFX *previousDisplay = display;
-    display = &pageCanvasA;
-    drawEvolutionDebugPage();
-    display = previousDisplay;
-    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(),
-                              LCD_WIDTH, LCD_HEIGHT);
-  } else {
-    drawEvolutionDebugPage();
-  }
 }
 
 void debugAdvanceEvolution() {
@@ -1814,17 +1767,22 @@ void presentCoherentPageFrame(Page page) {
 }
 
 // Shared eased slide, used for every full-frame transition in this app
-// (page swipes, settings sub-view pushes, settings grid paging) so there is
-// exactly one place that owns the smoothstep curve, the frame pacing, and
-// the "new content enters, old content exits" compositing. `vertical`
-// selects which axis slides; `enterFromEnd` is true when the new frame
-// should slide in from the right/bottom while the old one exits toward the
-// left/top (a "forward" swipe), false for the reverse. Always measures the
-// actual panel blit time and subtracts it from the per-frame delay, so
-// every transition in the app holds the same ~1000/frameTimeMs pace
-// regardless of how long that particular blit happens to take.
+// (page swipes, settings sub-view pushes, settings grid paging, overlay
+// open/close) so there is exactly one place that owns the smoothstep
+// curve, the frame pacing, and the "new content enters, old content exits"
+// compositing. `vertical` selects which axis slides; `enterFromEnd` is true
+// when the new frame should slide in from the right/bottom while the old
+// one exits toward the left/top (a "forward" swipe), false for the
+// reverse. Always measures the actual panel blit time and subtracts it
+// from the per-frame delay, so every transition in the app holds the same
+// ~1000/frameTimeMs pace regardless of how long that particular blit
+// happens to take -- which is also why frameCount can sit as high as 18
+// (up from an earlier 14/15): the adaptive delay means a finer-grained
+// slide costs total transition time, not per-frame smoothness, so it's a
+// free upgrade on hardware fast enough to not need the delay at all, and
+// still just a proportionally longer transition on hardware that does.
 void playSlideTransition(const uint16_t *from, const uint16_t *to, bool vertical,
-                         bool enterFromEnd, uint8_t frameCount = 15,
+                         bool enterFromEnd, uint8_t frameCount = 18,
                          uint32_t frameTimeMs = 17) {
   const int16_t span = vertical ? LCD_HEIGHT : LCD_WIDTH;
   for (uint8_t frame = 1; frame <= frameCount; ++frame) {
@@ -1867,6 +1825,48 @@ void playSlideTransition(const uint16_t *from, const uint16_t *to, bool vertical
   }
 }
 
+// Slides a full-screen overlay (Genome Profile, Player ID, Rivals, Evolution
+// Debug -- see each one's own comment in ui_pages.h/main.cpp) up from the
+// bottom over whatever page it was opened from, using the same eased slide
+// as every other transition in the app (playSlideTransition) instead of the
+// hard cut these overlays used to pop in with. `fromPage` is rendered as
+// the outgoing frame via the usual drawActivePage() dispatch; `drawOverlay`
+// draws the incoming one directly (it isn't one of the 5 swipeable pages,
+// so it has no Page enum value of its own to hand renderPageToCanvas()).
+void presentOverlayEntrance(Page fromPage, void (*drawOverlay)()) {
+  if (!transitionsReady) {
+    drawOverlay();
+    return;
+  }
+  renderPageToCanvas(fromPage, pageCanvasA);
+  Arduino_GFX *previousDisplay = display;
+  display = &pageCanvasB;
+  drawOverlay();
+  display = previousDisplay;
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/true, 18);
+}
+
+// The reverse of presentOverlayEntrance(): slides the still-open overlay
+// back down and out, revealing `toPage` underneath. `drawOverlay` re-draws
+// the overlay's current (already-on-screen) content as the outgoing frame
+// rather than reading it back from the live panel, the same "just redraw
+// it" approach renderPageToCanvas() itself relies on for every other
+// transition here.
+void presentOverlayExit(void (*drawOverlay)(), Page toPage) {
+  if (!transitionsReady) {
+    presentCoherentPageFrame(toPage);
+    return;
+  }
+  Arduino_GFX *previousDisplay = display;
+  display = &pageCanvasA;
+  drawOverlay();
+  display = previousDisplay;
+  renderPageToCanvas(toPage, pageCanvasB);
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/false, 18);
+}
+
 void transitionSettingsView(SettingsView target, bool forward) {
   if (target == settingsView) return;
   if (!transitionsReady) {
@@ -1879,7 +1879,7 @@ void transitionSettingsView(SettingsView target, bool forward) {
   settingsView = target;
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasB);
   playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
-                      /*vertical=*/false, /*enterFromEnd=*/forward, 14);
+                      /*vertical=*/false, /*enterFromEnd=*/forward, 18);
 }
 
 void transitionSettingsGrid(uint8_t target) {
@@ -1896,7 +1896,7 @@ void transitionSettingsGrid(uint8_t target) {
   settingsGridPage = target;
   renderPageToCanvas(PAGE_SETTINGS, pageCanvasB);
   playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
-                      /*vertical=*/true, /*enterFromEnd=*/upward, 14);
+                      /*vertical=*/true, /*enterFromEnd=*/upward, 18);
 }
 
 void presentBattlePage() {
@@ -1920,7 +1920,7 @@ void transitionToPage(Page target, int8_t direction) {
   currentPage = target;
   renderPageToCanvas(currentPage, pageCanvasB);
   playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
-                      /*vertical=*/false, /*enterFromEnd=*/direction < 0, 15);
+                      /*vertical=*/false, /*enterFromEnd=*/direction < 0, 18);
 }
 
 void updateClockDisplay() {
@@ -1952,10 +1952,23 @@ void changeSetting(int16_t x, int16_t y) {
     transitionSettingsView(static_cast<SettingsView>(item + 1), true);
   } else if (item == 6) {
     showingPlayerId = true;
-    presentPlayerIdPage();
+    presentOverlayEntrance(PAGE_SETTINGS, drawPlayerIdPage);
   } else if (item == 7) {
     showingUpdate = true;
-    presentUpdatePage("STARTING SECURE CHECK", 0);
+    // Entrance slide only for this first frame -- see presentOverlayExit's
+    // own comment on why Update's close (and, by the same reasoning, its
+    // repeated in-place progress updates below) stays a hard cut instead.
+    if (transitionsReady) {
+      renderPageToCanvas(PAGE_SETTINGS, pageCanvasA);
+      Arduino_GFX *previousDisplay = display;
+      display = &pageCanvasB;
+      drawUpdatePage("STARTING SECURE CHECK", 0);
+      display = previousDisplay;
+      playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                          /*vertical=*/true, /*enterFromEnd=*/true, 18);
+    } else {
+      presentUpdatePage("STARTING SECURE CHECK", 0);
+    }
     const OtaResult otaResult = performSignedOta(
         networkConfig.ssid, networkConfig.password,
         [](const char *status, int progress) { presentUpdatePage(status, progress); });
@@ -2609,10 +2622,10 @@ void loop() {
         if (touchLastY >= 285 && touchLastY < 365 && pet.stage < 4) {
           debugAdvanceEvolution();
           showingEvolutionDebug = false;
-          presentCoherentPageFrame(PAGE_COMPANION);
+          presentOverlayExit(drawEvolutionDebugPage, PAGE_COMPANION);
         } else if (touchLastY >= 365) {
           showingEvolutionDebug = false;
-          presentCoherentPageFrame(PAGE_COMPANION);
+          presentOverlayExit(drawEvolutionDebugPage, PAGE_COMPANION);
         }
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
@@ -2623,14 +2636,24 @@ void loop() {
           touchStartY >= 125 && touchStartY <= 305) {
         showingEvolutionDebug = true;
         playTone(262, 80, 35);
-        presentEvolutionDebugPage();
+        presentOverlayEntrance(PAGE_COMPANION, drawEvolutionDebugPage);
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
       if (showingPlayerId || showingUpdate) {
+        // Update's own close stays a hard cut rather than gaining an
+        // entrance/exit slide like the other overlays here -- redoing its
+        // exit slide would mean redrawing the OTA result screen from
+        // scratch (drawUpdatePage() takes the status/progress it last
+        // showed as parameters, unlike every other overlay's parameterless
+        // draw function), and that isn't worth the added state just for
+        // this one screen's close animation.
+        const bool wasPlayerId = showingPlayerId;
         showingPlayerId = false;
         showingUpdate = false;
-        if (transitionsReady) {
+        if (wasPlayerId) {
+          presentOverlayExit(drawPlayerIdPage, PAGE_SETTINGS);
+        } else if (transitionsReady) {
           renderPageToCanvas(PAGE_SETTINGS, pageCanvasA);
           panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(),
                                     LCD_WIDTH, LCD_HEIGHT);
@@ -2642,7 +2665,7 @@ void loop() {
       }
       if (showingRivals) {
         showingRivals = false;
-        presentBattlePage();
+        presentOverlayExit(drawRivalsPage, PAGE_BATTLE);
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
@@ -2653,7 +2676,7 @@ void loop() {
           presentGenomeProfilePage();
         } else if (touchLastY >= 393 || deltaX > 55) {
           showingGenomeProfile = false;
-          presentCoherentPageFrame(genomeProfileReturnPage);
+          presentOverlayExit(drawGenomeProfilePage, genomeProfileReturnPage);
         }
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
@@ -2712,7 +2735,7 @@ void loop() {
                  touchStartY >= 90 && touchStartY <= 358) {
         genomeProfileReturnPage = PAGE_COMPANION;
         showingGenomeProfile = true;
-        presentGenomeProfilePage();
+        presentOverlayEntrance(PAGE_COMPANION, drawGenomeProfilePage);
       } else if (currentPage == PAGE_STATUS && touchLastY >= 360 && touchLastY < 448) {
         if (touchLastX < 124) performAction(0);
         else if (touchLastX < 244) performAction(1);
@@ -2742,7 +2765,7 @@ void loop() {
         // The "RECORD ...W-...L" line drawn in drawBattlePage()'s Idle
         // state -- see include/ui_pages.h's own comment on drawRivalsPage().
         showingRivals = true;
-        presentRivalsPage();
+        presentOverlayEntrance(PAGE_BATTLE, drawRivalsPage);
       } else if (currentPage == PAGE_BATTLE) {
         handleBattleTap(touchLastX, touchLastY);
       }

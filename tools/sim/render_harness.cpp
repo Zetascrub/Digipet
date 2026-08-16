@@ -125,31 +125,31 @@ void seedTestSettings() {
   settings.themeIndex = 0;
 }
 
-// Mirrors src/main.cpp's applyTheme() `themes[]` table (index 0/AUTO is
-// genome-derived there and has no fixed palette, so isn't offered here) --
-// duplicated rather than shared because main.cpp isn't linked into this
-// harness at all. Lets --theme=N re-point every COLOR_* global the same way
-// the real Settings > Theme picker does, so button-contrast fixes like
+// Slugs for ui_pages.h's shared kThemes table, index-aligned with it (and
+// with settings.themeIndex/THEME_LABELS) so index 0/AUTO -- genome-derived,
+// no fixed palette -- is correctly not offered here. Lets --theme=N (or
+// one of these names) re-point every COLOR_* global the same way the real
+// Settings > Theme picker does, so button-contrast fixes like
 // readableTextColor() can be checked against all 4 fixed themes, not just
 // the Cyber Mint default this file's own globals above are seeded with.
-struct HarnessTheme {
-  const char *name;
-  uint16_t background, card, primary, text, muted, warning, danger, cyan, secondary;
+struct HarnessThemeName {
+  const char *slug;
+  int index;
 };
-const HarnessTheme kHarnessThemes[] = {
-    {"cyber-mint", 0x0823, 0x18E8, 0x6718, 0xE73C, 0x8413, 0xFE48, 0xF2CB, 0x269F, 0xA81F},
-    {"amber-core", 0x1000, 0x28C2, 0xFD20, 0xFF9C, 0x9B48, 0xFFE0, 0xF260, 0xFBA0, 0xB940},
-    {"violet-link", 0x080F, 0x2019, 0xC35F, 0xF73F, 0x8C18, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},
-    {"mono-signal", 0x0000, 0x18C3, 0xC618, 0xFFFF, 0x7BEF, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},
+constexpr HarnessThemeName kHarnessThemeNames[] = {
+    {"cyber-mint", 1},
+    {"amber-core", 2},
+    {"violet-link", 3},
+    {"mono-signal", 4},
 };
-constexpr int kHarnessThemeCount = sizeof(kHarnessThemes) / sizeof(kHarnessThemes[0]);
 
 void applyHarnessTheme(int index) {
-  if (index < 0 || index >= kHarnessThemeCount) {
-    fprintf(stderr, "unknown --theme index %d (0-%d)\n", index, kHarnessThemeCount - 1);
+  if (index <= 0 || index >= kThemeCount) {
+    fprintf(stderr, "unknown --theme index %d (1-%d; 0/AUTO has no fixed palette)\n", index,
+            kThemeCount - 1);
     exit(1);
   }
-  const HarnessTheme &t = kHarnessThemes[index];
+  const ThemeColors &t = kThemes[index];
   COLOR_BACKGROUND = t.background;
   COLOR_CARD = t.card;
   COLOR_MINT = t.primary;
@@ -174,8 +174,8 @@ int main(int argc, char **argv) {
     if (strncmp(argv[i], "--theme=", 8) == 0) {
       const char *value = argv[i] + 8;
       themeIndex = -1;
-      for (int t = 0; t < kHarnessThemeCount; ++t) {
-        if (strcmp(value, kHarnessThemes[t].name) == 0) themeIndex = t;
+      for (const auto &named : kHarnessThemeNames) {
+        if (strcmp(value, named.slug) == 0) themeIndex = named.index;
       }
       if (themeIndex < 0) themeIndex = atoi(value);
     } else {

@@ -29,6 +29,14 @@ tools/sim/render.sh battle-picker3 /tmp/picker.png                #  -nogenome
 tools/sim/render.sh battle-picker7 /tmp/picker7-p2.png 1   # [stage] arg = results page
 tools/sim/render.sh rivals /tmp/rivals.png 3          # [stage] arg = rival count (max 8)
 tools/sim/render.sh rivals-empty /tmp/rivals-empty.png
+
+# Any of the above also takes a 4th [theme] arg -- cyber-mint|amber-core|
+# violet-link|mono-signal, or a kThemes[] index 1-4 (see include/ui_pages.h)
+# -- to re-point every COLOR_* global the same way Settings > Theme does,
+# without touching the file's own Cyber Mint-seeded globals. Omit it for
+# that default. See ../../docs/style-guide.md for why checking a UI change
+# against all 4 fixed themes, not just this default one, matters.
+tools/sim/render.sh battle-fight /tmp/fight_amber.png 2 amber-core
 ```
 
 Output is a real PNG at the panel's native 368x448, pixel-accurate RGB565
