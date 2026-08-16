@@ -1231,3 +1231,38 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
 }
 
 
+
+// A full-screen overlay, not one of the 5 swipeable pages -- see this
+// function's own declaration in ui_pages.h. playerId is shown as raw hex
+// (there's no friendly nickname exchanged over BLE, just the same 32-bit
+// identity WHOAMI and the Player ID screen already surface as hex).
+void drawRivalsPage() {
+  paintPageBackdrop();
+  drawCentered("RIVALS", 18, 3, COLOR_MINT);
+  drawCentered("WIN-LOSS BY OPPONENT", 51, 1, COLOR_CYAN);
+
+  drawPanelGlow(20, 70, 328, 310, 26, COLOR_PURPLE);
+  display->fillRoundRect(20, 70, 328, 310, 26, COLOR_CARD);
+  display->drawRoundRect(27, 77, 314, 296, 21, COLOR_PURPLE);
+
+  if (battleStats.rivalCount == 0) {
+    drawCentered("NO RIVALS YET", 205, 2, COLOR_TEXT);
+    drawCentered("BATTLE SOMEONE TO START", 234, 1, COLOR_MUTED);
+  } else {
+    constexpr int16_t kFirstRowY = 92;
+    constexpr int16_t kRowPitch = 35;
+    for (uint8_t i = 0; i < battleStats.rivalCount; ++i) {
+      const BattleRival &rival = battleStats.rivals[i];
+      const int16_t y = kFirstRowY + i * kRowPitch;
+      display->setTextSize(2);
+      display->setTextColor(COLOR_TEXT);
+      display->setCursor(46, y);
+      display->printf("%08lX", (unsigned long)rival.playerId);
+      display->setTextColor(rival.wins >= rival.losses ? COLOR_MINT : COLOR_DANGER);
+      display->setCursor(216, y);
+      display->printf("%uW-%uL", rival.wins, rival.losses);
+    }
+  }
+
+  drawCentered("TAP TO RETURN", 396, 2, COLOR_CYAN);
+}

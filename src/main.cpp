@@ -154,27 +154,9 @@ uint32_t fleeArmedUntil = 0;
 // from ESP.getEfuseMac(), not saved in `pet`), it persists across egg
 // hatches/blends rather than resetting with the current companion.
 constexpr uint32_t BATTLE_STATS_MAGIC = 0x42535401;  // "BST" + schema 1
-constexpr uint8_t kMaxBattleRivals = 8;
-
-struct BattleRival {
-  uint32_t playerId = 0;
-  uint16_t wins = 0;
-  uint16_t losses = 0;
-};
-
-struct BattleStats {
-  uint32_t magic = 0;
-  uint32_t wins = 0;
-  uint32_t losses = 0;
-  uint32_t fled = 0;
-  uint32_t opponentFled = 0;
-  uint32_t disconnected = 0;
-  uint8_t rivalCount = 0;
-  uint8_t reserved[3]{};
-  BattleRival rivals[kMaxBattleRivals]{};
-};
 
 BattleStats battleStats{};
+bool showingRivals = false;
 
 // Sets `message` and arms drawToastOverlay() to show it as a slide-down
 // banner on whichever of the five main pages is on screen next -- see the
@@ -1395,6 +1377,18 @@ void presentPlayerIdPage() {
   }
 }
 
+void presentRivalsPage() {
+  if (transitionsReady) {
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasA;
+    drawRivalsPage();
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+  } else {
+    drawRivalsPage();
+  }
+}
+
 void drawUpdatePage(const char *status, int progress) {
   paintPageBackdrop();
   drawCentered("SIGNED UPDATE", 30, 3, COLOR_MINT);
@@ -2541,7 +2535,7 @@ void loop() {
     presentCoherentPageFrame(PAGE_GENOME_LAB);
   } else if (!sleeping && toastVisible && !showingEvolutionDebug &&
              !showingGenomeProfile && !showingPlayerId && !showingUpdate &&
-             !showingBattleResults &&
+             !showingBattleResults && !showingRivals &&
              (currentPage == PAGE_STATUS || currentPage == PAGE_BATTLE ||
               currentPage == PAGE_SETTINGS) &&
              now - lastAnimation >= 30) {
@@ -2646,6 +2640,12 @@ void loop() {
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
+      if (showingRivals) {
+        showingRivals = false;
+        presentBattlePage();
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       if (showingGenomeProfile) {
         if (touchLastY >= 338 && touchLastY < 393) {
           if (touchLastX < LCD_WIDTH / 2) exportActiveGenome();
@@ -2735,6 +2735,14 @@ void loop() {
           playTone(330, 90, 38);
         }
         drawHome();
+      } else if (currentPage == PAGE_BATTLE && battle.state() == FamiliarBattleState::Idle &&
+                 touchLastX >= 24 && touchLastX <= 160 &&
+                 touchLastY >= 56 && touchLastY <= 78 &&
+                 abs(deltaX) < 20 && abs(deltaY) < 20) {
+        // The "RECORD ...W-...L" line drawn in drawBattlePage()'s Idle
+        // state -- see include/ui_pages.h's own comment on drawRivalsPage().
+        showingRivals = true;
+        presentRivalsPage();
       } else if (currentPage == PAGE_BATTLE) {
         handleBattleTap(touchLastX, touchLastY);
       }

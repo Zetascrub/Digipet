@@ -80,6 +80,30 @@ extern uint8_t i2cDeviceCount;
 
 extern bool animationFrame;
 
+// A per-device record, not a per-pet one -- persists across egg hatches/
+// blends. Definition (magic-guarded, persisted through Preferences/NVS)
+// stays in main.cpp; the type lives here because drawRivalsPage() reads it.
+constexpr uint8_t kMaxBattleRivals = 8;
+
+struct BattleRival {
+  uint32_t playerId = 0;
+  uint16_t wins = 0;
+  uint16_t losses = 0;
+};
+
+struct BattleStats {
+  uint32_t magic = 0;
+  uint32_t wins = 0;
+  uint32_t losses = 0;
+  uint32_t fled = 0;
+  uint32_t opponentFled = 0;
+  uint32_t disconnected = 0;
+  uint8_t rivalCount = 0;
+  uint8_t reserved[3]{};
+  BattleRival rivals[kMaxBattleRivals]{};
+};
+extern BattleStats battleStats;
+
 struct DeviceSettings {
   uint32_t magic;
   uint8_t brightnessIndex;
@@ -191,6 +215,12 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
                         bool isResult, bool moveSubmitted, bool fleeArmed,
                         bool opponentGenomeAvailable, bool genomeCopied,
                         const PetGenome *opponentGenome);
+
+// A full-screen overlay (tapped open from the Battle Idle screen's "RECORD"
+// line, dismissed by tapping anywhere -- see main.cpp), not one of the 5
+// swipeable pages, same as the Player ID/OTA update/evolution debug
+// overlays already are.
+void drawRivalsPage();
 
 // --- Settings ------------------------------------------------------------------
 

@@ -27,6 +27,8 @@ tools/sim/render.sh battle-result /tmp/result.png                #  -submitted|
 tools/sim/render.sh battle-result-copied /tmp/result2.png        #  -fleearmed|
 tools/sim/render.sh battle-picker3 /tmp/picker.png                #  -nogenome
 tools/sim/render.sh battle-picker7 /tmp/picker7-p2.png 1   # [stage] arg = results page
+tools/sim/render.sh rivals /tmp/rivals.png 3          # [stage] arg = rival count (max 8)
+tools/sim/render.sh rivals-empty /tmp/rivals-empty.png
 ```
 
 Output is a real PNG at the panel's native 368x448, pixel-accurate RGB565

@@ -54,6 +54,8 @@ const char *THEME_LABELS[] = {"AUTO // PET", "CYBER MINT", "AMBER CORE",
 uint8_t settingsGridPage = 0;
 SettingsView settingsView = SETTINGS_HOME;
 
+BattleStats battleStats{};
+
 bool hasCopiedGenome = false;
 bool newEggConfirmation = false;
 uint32_t newEggConfirmationUntil = 0;
@@ -240,6 +242,22 @@ int main(int argc, char **argv) {
       return 1;
     }
     if (isFightOrResult) drawPageDots(PAGE_BATTLE);
+  } else if (strcmp(page, "rivals-empty") == 0) {
+    battleStats = BattleStats{};
+    drawRivalsPage();
+  } else if (strcmp(page, "rivals") == 0) {
+    battleStats = BattleStats{};
+    const uint32_t ids[] = {0x7B6CCCu, 0xA1B2C3D4u, 0x00001234u, 0xDEADBEEFu,
+                            0x00FFAAu, 0x5A5A5A5Au, 0x1u, 0xFFFFFFFFu};
+    const uint16_t wins[] = {3, 1, 0, 12, 2, 5, 0, 99};
+    const uint16_t losses[] = {1, 0, 4, 3, 2, 5, 1, 0};
+    const int count = argc > 3 ? atoi(argv[3]) : kMaxBattleRivals;
+    battleStats.rivalCount = static_cast<uint8_t>(
+        std::min(count, static_cast<int>(kMaxBattleRivals)));
+    for (uint8_t i = 0; i < battleStats.rivalCount; ++i) {
+      battleStats.rivals[i] = {ids[i], wins[i], losses[i]};
+    }
+    drawRivalsPage();
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;
