@@ -97,6 +97,11 @@ Direct Challenge stat formulas, matchup tables, and turn resolution in
 NimBLE/Wi-Fi, so it stays fast and needs no board. CI
 (`.github/workflows/build.yml`) runs both on every push and PR.
 
+`tools/sim/render.sh <page> [output.png]` renders the Companion/Status/egg
+screens with the real drawing code (`src/ui_pages.cpp`, extracted from
+`main.cpp`) compiled natively, for a visual look at a UI change without
+flashing a board. See `tools/sim/README.md`.
+
 ## Repository layout
 
 ```text

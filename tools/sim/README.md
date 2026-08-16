@@ -1,0 +1,71 @@
+# Native render harness
+
+Renders the Companion, Status, and egg-stage screens using the *real*
+production drawing code (`src/ui_pages.cpp`, extracted verbatim from
+`main.cpp`) compiled for the host instead of the ESP32 -- no board, no
+flash cycle. Useful for visually reviewing a UI change before flashing, or
+for generating reference images to compare across changes.
+
+## Use
+
+```bash
+tools/sim/render.sh companion /tmp/companion.png     # stage defaults to 2
+tools/sim/render.sh status /tmp/status.png 4          # stage 4 = Titan
+tools/sim/render.sh egg /tmp/egg.png                  # always stage 0
+```
+
+Output is a real PNG at the panel's native 368x448, pixel-accurate RGB565
+(same 16-bit color the panel actually gets sent -- not the AMOLED's own
+color reproduction, which this can't capture).
+
+## What this does and doesn't prove
+
+**Proves:** layout, procedural creature/egg rendering across stage and
+genome, color/theme values, text placement -- anything that's a pure
+function of `pet`/theme-color state. If a change moves something off
+Compositions screen or breaks a creature's silhouette, this will show it
+immediately without a flash cycle.
+
+**Doesn't prove:** touch feel, real elapsed-time animation, BLE battles
+between two peers, or how the AMOLED itself reproduces these colors. Those
+still need the physical board (see the root README's flashing instructions)
+or, for protocol-only testing, `share/vpet-battle/vpet_battle_simulator.py`.
+
+## How it works
+
+`Arduino_Canvas` (the library's in-memory framebuffer class the real
+firmware already renders every page into before blitting to the panel) has
+no hardware dependency of its own -- it's pure pixel-array arithmetic. The
+only thing standing between that and a native build was the rest of the
+Arduino core (`String`, `Print`, `PROGMEM`, `millis()`) that
+`Arduino_GFX`/the drawing code expect to exist. `tools/sim/fakes/` supplies
+minimal stand-ins for exactly that surface (see each file's own comment) --
+not a general Arduino compatibility layer, just enough for this.
+
+`render_harness.cpp` defines the same global variables `include/ui_pages.h`
+declares `extern` (colors, `pet`, sensor-detected flags, etc.) with fixed
+test values, then calls the real page functions directly and dumps the
+resulting canvas to a PPM (converted to PNG by `render.sh` via Pillow).
+
+## Extending to more pages
+
+Currently covers Companion, Status, and the egg-stage Companion screen.
+Battle/Settings/Genome Lab/boot sequence aren't extracted yet -- they're
+bigger asks (Battle needs a renderable `FamiliarBattleService` stand-in;
+boot sequence is inherently animated-over-time rather than one static
+frame) and were deliberately left for a follow-up rather than done in one
+pass. To extend:
+
+1. Identify the page function's dependencies the same way this pass did:
+   `grep` the function body for globals it reads that aren't already
+   declared in `include/ui_pages.h`.
+2. Move the function (and any drawing-only helpers it calls that aren't
+   already moved) from `src/main.cpp` into `src/ui_pages.cpp`, verbatim --
+   no logic changes.
+3. Add `extern` declarations for any newly-needed state to
+   `include/ui_pages.h`, and function prototypes for anything moved.
+4. `pio run -e waveshare_amoled_v2` to confirm the firmware still builds
+   (should be a near-zero size delta -- code moved, not changed).
+5. Define harness-side fakes for the new state in `render_harness.cpp`
+   (or a fake object matching the real type's public interface, the way a
+   `FamiliarBattleService` stand-in would need to for Battle).
