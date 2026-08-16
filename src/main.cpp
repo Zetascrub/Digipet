@@ -145,7 +145,6 @@ char genomeTransferStatus[32] = "NO COPIED GENOME";
 // tracked separately rather than as another FamiliarBattleState.
 bool showingBattleResults = false;
 uint8_t battleResultsPage = 0;
-constexpr uint8_t kBattleResultsPerPage = 3;
 // Flee needs a second confirming tap so it can't be triggered by a
 // mis-tap during a real match; the arm expires on its own too.
 bool fleeArmed = false;
@@ -1241,25 +1240,6 @@ void bootAnimation() {
   bootOutro(palette);
 }
 
-enum BattleMoveIcon : uint8_t { ICON_ATTACK, ICON_DEFEND, ICON_SPECIAL, ICON_FLEE };
-
-// Hand-pixelled to match STAT_ICONS' style: a blade for Attack, a shield
-// outline for Defend, a burst for Special, and an exit arrow for Flee.
-const uint16_t BATTLE_MOVE_ICONS[4][16] PROGMEM = {
-  {0x00E0, 0x0180, 0x0300, 0x0600, 0x0C00, 0x1800, 0x3000, 0x6000,
-   0xC000, 0xFF80, 0x1800, 0x1800, 0x1800, 0x3C00, 0x1800, 0x0000},  // attack
-  {0x0000, 0x3FF0, 0x7FF8, 0xFFFC, 0xFFFC, 0xFFFC, 0xFFFC, 0x7FF8,
-   0x7FF8, 0x3FF0, 0x3FF0, 0x1FE0, 0x0FC0, 0x0780, 0x0300, 0x0000},  // defend
-  {0x0080, 0x0080, 0x01C0, 0x01C0, 0x03E0, 0xC7F1, 0x67F3, 0x3FFE,
-   0x3FFE, 0x67F3, 0xC7F1, 0x03E0, 0x01C0, 0x01C0, 0x0080, 0x0000},  // special
-  {0x0000, 0x07F0, 0x0800, 0x1000, 0x2000, 0x41FE, 0xFF82, 0x4104,
-   0x21FC, 0x1000, 0x0800, 0x07F0, 0x0000, 0x0000, 0x0000, 0x0000},  // flee
-};
-
-void drawBattleMoveIcon(BattleMoveIcon icon, int16_t x, int16_t y, uint16_t color) {
-  drawGlyph16(BATTLE_MOVE_ICONS[icon], x, y, color);
-}
-
 bool i2cPresent(uint8_t address) {
   Wire.beginTransmission(address);
   return Wire.endTransmission() == 0;
@@ -1503,171 +1483,6 @@ void debugAdvanceEvolution() {
 // One row of a scanned opponent: stage/level identity plus a 3-bar signal
 // strength readout from RSSI. No creature portrait here -- their genome
 // hasn't been exchanged yet at this point, only their HELLO/advertisement.
-void drawOpponentRow(const FamiliarBattleOpponent &opponent, int16_t y) {
-  drawPanelGlow(24, y, 320, 68, 18, COLOR_CYAN);
-  display->fillRoundRect(24, y, 320, 68, 18, COLOR_CARD);
-  display->drawRoundRect(24, y, 320, 68, 18, COLOR_CYAN);
-  display->setTextSize(2);
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(44, y + 14);
-  display->print(opponent.stageIndex < 5 ? STAGE_NAMES[opponent.stageIndex] : "UNKNOWN");
-  display->setTextSize(1);
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(44, y + 42);
-  display->printf("LEVEL %u", opponent.level);
-  const uint8_t bars = opponent.rssi > -60 ? 3 : opponent.rssi > -75 ? 2 : 1;
-  for (uint8_t b = 0; b < 3; ++b) {
-    const int16_t bh = 8 + b * 6;
-    display->fillRect(298 + b * 10, y + 50 - bh, 6, bh,
-                      b < bars ? COLOR_MINT : COLOR_MUTED);
-  }
-}
-
-// The Find picker: a scrollable (swipe up/down) list of scan results instead
-// of auto-connecting to the first one found. Takes the result vector as a
-// parameter rather than reading battle.scanResults() directly so the exact
-// same drawing code can be previewed with synthetic data (DUMPSCAN).
-void drawBattleResultsPage(const std::vector<FamiliarBattleOpponent> &results,
-                           uint8_t page) {
-  paintPageBackdrop();
-  drawCentered("SELECT OPPONENT", 20, 2, COLOR_MINT);
-  const uint8_t totalPages = max<uint8_t>(
-      1, (results.size() + kBattleResultsPerPage - 1) / kBattleResultsPerPage);
-  const uint8_t start = page * kBattleResultsPerPage;
-  for (uint8_t i = 0; i < kBattleResultsPerPage; ++i) {
-    const size_t index = start + i;
-    if (index >= results.size()) break;
-    drawOpponentRow(results[index], 66 + i * 76);
-  }
-  if (totalPages > 1) {
-    char pageLabel[12];
-    snprintf(pageLabel, sizeof(pageLabel), "%u / %u", page + 1, totalPages);
-    drawCentered(pageLabel, 300, 1, COLOR_MUTED);
-    drawCentered("SWIPE FOR MORE", 320, 1, COLOR_MUTED);
-  }
-  display->fillRoundRect(84, 385, 200, 43, 14, COLOR_CARD);
-  display->drawRoundRect(84, 385, 200, 43, 14, COLOR_CYAN);
-  drawCenteredInRect("CANCEL", 84, 385, 200, 43, 2, COLOR_TEXT);
-  drawPageDots(PAGE_BATTLE);
-}
-
-// A small icon-and-glow button, matching the settings tile treatment, used
-// for both the Idle state's HOST/FIND choice and (elsewhere) move buttons.
-void drawBattleButton(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius,
-                      uint16_t color, BattleMoveIcon icon, const char *label) {
-  drawPanelGlow(x, y, w, h, radius, color);
-  display->fillRoundRect(x, y, w, h, radius, color);
-  drawBattleMoveIcon(icon, x + w / 2 - 16, y + 6, COLOR_TEXT);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
-  drawCenteredInRect(label, x, y + h - 20, w, 18, 1, COLOR_TEXT);
-}
-
-// Shared "in battle" layout for both the live Battling/Result states and the
-// DUMPBATTLE debug preview -- takes every value as a parameter rather than
-// reading the live `battle` object, so the exact same drawing code can be
-// exercised with synthetic data for visual verification without a live BLE
-// match (which needs two physical devices to test at all).
-void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
-                        uint16_t opponentMaxHp, uint8_t opponentLevel,
-                        bool enhancedLink, const char *logLine1, const char *logLine2,
-                        bool isResult, bool moveSubmitted, bool fleeArmed,
-                        bool opponentGenomeAvailable, bool genomeCopied,
-                        const PetGenome *opponentGenome) {
-  const PetPalette myPalette = paletteForGenome(pet.genome);
-  drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 90, 96, 62, myPalette.glow);
-  if (opponentGenome) {
-    drawCreaturePortrait(*opponentGenome, 4, 278, 96, 62, COLOR_DANGER);
-  } else {
-    // Opponent genome hasn't finished arriving over BLE yet -- a neutral
-    // placeholder rather than guessing at their creature's appearance.
-    display->fillCircle(278, 96, 43, scaleRgb565(COLOR_DANGER, 16));
-    display->drawCircle(278, 96, 41, COLOR_DANGER);
-    display->fillCircle(278, 96, 35, COLOR_CARD);
-    display->setTextSize(3);
-    display->setTextColor(COLOR_MUTED);
-    display->setCursor(270, 80);
-    display->print("?");
-  }
-
-  display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(74, 138); display->print("YOU");
-  display->setCursor(240, 138); display->printf("OPP LV%u", opponentLevel);
-
-  auto hpBar = [&](int16_t x, uint16_t hp, uint16_t maxHp, uint16_t color) {
-    display->drawRoundRect(x, 150, 144, 17, 7, COLOR_MUTED);
-    if (hp && maxHp) {
-      const int16_t filled = 138 * hp / maxHp;
-      display->fillRoundRect(x + 3, 153, filled, 11, 5, color);
-      if (filled > 6) {
-        display->fillCircle(x + 3 + filled - 6, 158, 5,
-                            lerpRgb565(color, RGB565_WHITE, 0.35f));
-      }
-    }
-  };
-  const uint16_t myHpColor =
-      myHp * 100 / max<uint16_t>(1, myMaxHp) < 30 ? COLOR_DANGER : COLOR_MINT;
-  const uint16_t oppHpColor =
-      opponentHp * 100 / max<uint16_t>(1, opponentMaxHp) < 30 ? COLOR_WARNING : COLOR_DANGER;
-  hpBar(24, myHp, myMaxHp, myHpColor);
-  hpBar(200, opponentHp, opponentMaxHp, oppHpColor);
-  display->setCursor(24, 172); display->printf("%u / %u", myHp, myMaxHp);
-  display->setCursor(268, 172); display->printf("%u / %u", opponentHp, opponentMaxHp);
-  drawCentered(enhancedLink ? "ENHANCED LINK" : "CORE LINK", 188, 1,
-              enhancedLink ? COLOR_MINT : COLOR_MUTED);
-
-  if (!isResult) {
-    // A compact two-line log ("you did this, they did that") instead of a
-    // big decorative VS panel, freeing up height for a proper 2x2 move
-    // grid -- bigger, easier-to-hit buttons instead of four squeezed into
-    // one row. Text size bumped to 2 for readability; the log messages
-    // themselves (familiar_battle_service.cpp's addLog calls) were shortened
-    // to fit at this size.
-    drawPanelGlow(24, 196, 320, 72, 18, COLOR_PURPLE);
-    display->fillRoundRect(24, 196, 320, 72, 18, COLOR_CARD);
-    display->setTextSize(2);
-    display->setTextColor(COLOR_MUTED);
-    display->setCursor(36, 208);
-    display->print(logLine1);
-    display->setTextColor(COLOR_TEXT);
-    display->setCursor(36, 234);
-    display->print(logLine2);
-
-    const char *labels[] = {"ATK", "DEF", "SPEC", fleeArmed ? "CONFIRM?" : "FLEE"};
-    const uint16_t colors[] = {COLOR_DANGER, COLOR_CYAN, COLOR_PURPLE,
-                               fleeArmed ? COLOR_WARNING : COLOR_MUTED};
-    constexpr int16_t colX[] = {24, 194};
-    constexpr int16_t rowY[] = {280, 336};
-    for (uint8_t i = 0; i < 4; ++i) {
-      drawBattleButton(colX[i % 2], rowY[i / 2], 150, 50, 14, colors[i],
-                       static_cast<BattleMoveIcon>(i), labels[i]);
-    }
-    drawCentered(fleeArmed ? "TAP FLEE AGAIN TO CONFIRM" :
-                moveSubmitted ? "WAITING FOR OPPONENT" : "SELECT MOVE", 396, 1,
-                fleeArmed ? COLOR_WARNING :
-                moveSubmitted ? COLOR_WARNING : COLOR_MINT);
-    return;
-  }
-
-  drawPanelGlow(24, 198, 320, 98, 22, COLOR_PURPLE);
-  display->fillRoundRect(24, 198, 320, 98, 22, COLOR_CARD);
-  drawCentered("BATTLE COMPLETE", 224, 3, COLOR_WARNING);
-  drawCentered(logLine2, 278, 1, COLOR_TEXT);
-
-  if (opponentGenomeAvailable) {
-    drawPanelGlow(18, 305, 160, 54, 14, COLOR_PURPLE);
-    drawPanelGlow(190, 305, 160, 54, 14, COLOR_CYAN);
-    display->fillRoundRect(18, 305, 160, 54, 14, COLOR_PURPLE);
-    display->fillRoundRect(190, 305, 160, 54, 14, COLOR_CYAN);
-    drawCenteredInRect(genomeCopied ? "COPIED" : "COPY GENOME", 18, 305, 160, 54, 1,
-                       COLOR_TEXT);
-    drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, COLOR_BACKGROUND);
-  } else {
-    drawCentered("TAP TO RETURN", 330, 2, COLOR_CYAN);
-  }
-}
-
 void drawBattlePage() {
   if (showingBattleResults) {
     drawBattleResultsPage(battle.scanResults(), battleResultsPage);

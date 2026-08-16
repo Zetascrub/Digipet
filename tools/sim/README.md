@@ -1,10 +1,10 @@
 # Native render harness
 
-Renders the Companion, Status, Settings, and Genome Lab screens using the
-*real* production drawing code (`src/ui_pages.cpp`, extracted verbatim from
-`main.cpp`) compiled for the host instead of the ESP32 -- no board, no
-flash cycle. Useful for visually reviewing a UI change before flashing, or
-for generating reference images to compare across changes.
+Renders the Companion, Status, Settings, Genome Lab, and Battle screens
+using the *real* production drawing code (`src/ui_pages.cpp`, extracted
+verbatim from `main.cpp`) compiled for the host instead of the ESP32 -- no
+board, no flash cycle. Useful for visually reviewing a UI change before
+flashing, or for generating reference images to compare across changes.
 
 ## Use
 
@@ -21,6 +21,12 @@ tools/sim/render.sh settings-wake /tmp/w.png
 tools/sim/render.sh settings-theme /tmp/t.png
 tools/sim/render.sh settings-boot /tmp/o.png
 tools/sim/render.sh genomelab /tmp/genomelab.png
+tools/sim/render.sh battle-fight /tmp/fight.png                 # mid-battle;
+tools/sim/render.sh battle-fight-highstats /tmp/f2.png          #  also -lowhp|
+tools/sim/render.sh battle-result /tmp/result.png                #  -submitted|
+tools/sim/render.sh battle-result-copied /tmp/result2.png        #  -fleearmed|
+tools/sim/render.sh battle-picker3 /tmp/picker.png                #  -nogenome
+tools/sim/render.sh battle-picker7 /tmp/picker7-p2.png 1   # [stage] arg = results page
 ```
 
 Output is a real PNG at the panel's native 368x448, pixel-accurate RGB565
@@ -61,10 +67,16 @@ resulting canvas to a PPM (converted to PNG by `render.sh` via Pillow).
 Currently covers Companion (all 5 stages and all 5 body types' procedural
 creature rendering), Status, the egg-stage Companion screen (all 10 egg
 lineages), Settings (both home grid pages and all 6 settingsView
-sub-views), and Genome Lab. Battle and the boot sequence aren't extracted
-yet -- Battle needs a renderable `FamiliarBattleService` stand-in, and the
-boot sequence is inherently animated-over-time rather than one static
-frame, both bigger asks deliberately left for a follow-up. To extend:
+sub-views), Genome Lab, and Battle's Battling/Result/opponent-picker
+states (drawBattlingLayout/drawBattleResultsPage/drawOpponentRow/
+drawBattleButton -- already parameter-driven rather than reading the live
+`battle` object, the same design that already let main.cpp's own
+DUMPBATTLE/DUMPSCAN debug commands preview them, so no
+`FamiliarBattleService` stand-in was actually needed). Battle's Idle/
+Scanning/Hosting/Connecting states (drawBattlePage() itself, which *does*
+read `battle` directly) and the boot sequence aren't extracted yet -- the
+former needs a renderable `FamiliarBattleService` stand-in, the latter is
+inherently animated-over-time rather than one static frame. To extend:
 
 1. Identify the page function's dependencies the same way this pass did:
    `grep` the function body for globals it reads that aren't already

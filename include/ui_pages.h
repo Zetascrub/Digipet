@@ -1,8 +1,11 @@
 #pragma once
 
+#include <vector>
+
 #include <Arduino.h>
 #include <Arduino_GFX.h>
 
+#include "familiar_battle_service.h"
 #include "pet_genome.h"
 #include "pin_config.h"
 
@@ -160,6 +163,34 @@ void drawCreaturePortrait(const PetGenome &genome, uint8_t stage, int cx, int cy
                           int headWidth, uint16_t ringColor);
 void drawProceduralCreature(bool asleep);
 void drawCreature(bool frame, bool asleep);
+
+// --- Battle --------------------------------------------------------------------
+// drawBattlingLayout/drawBattleResultsPage/drawOpponentRow/drawBattleButton
+// take every value as a parameter rather than reading the live
+// FamiliarBattleService `battle` object directly (see each one's own
+// comment in ui_pages.cpp) -- the same design that already let main.cpp's
+// DUMPBATTLE/DUMPSCAN debug serial commands preview them with synthetic
+// data, since a live BLE match needs two physical devices to test at all.
+// That means they need no live-battle stand-in to render here either.
+// drawBattlePage() itself, which dispatches on battle.state(), stays in
+// main.cpp for exactly that reason.
+
+constexpr uint8_t kBattleResultsPerPage = 3;
+
+enum BattleMoveIcon : uint8_t { ICON_ATTACK, ICON_DEFEND, ICON_SPECIAL, ICON_FLEE };
+
+void drawBattleMoveIcon(BattleMoveIcon icon, int16_t x, int16_t y, uint16_t color);
+void drawOpponentRow(const FamiliarBattleOpponent &opponent, int16_t y);
+void drawBattleResultsPage(const std::vector<FamiliarBattleOpponent> &results,
+                           uint8_t page);
+void drawBattleButton(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius,
+                      uint16_t color, BattleMoveIcon icon, const char *label);
+void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
+                        uint16_t opponentMaxHp, uint8_t opponentLevel,
+                        bool enhancedLink, const char *logLine1, const char *logLine2,
+                        bool isResult, bool moveSubmitted, bool fleeArmed,
+                        bool opponentGenomeAvailable, bool genomeCopied,
+                        const PetGenome *opponentGenome);
 
 // --- Settings ------------------------------------------------------------------
 

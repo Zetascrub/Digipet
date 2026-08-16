@@ -79,6 +79,12 @@ void seedTestPet(uint8_t stage) {
   pet.genome = derivePetGenome(seed, evolutionSeed);
 }
 
+PetGenome opponentTestGenome() {
+  const uint32_t seed[4] = {0xCAFEBABE, 0xDEADBEEF, 0x0BADF00D, 0x8BADF00D};
+  const uint32_t evolutionSeed[4] = {0xFEEDFACE, 0x12345678, 0x9ABCDEF0, 0x01234567};
+  return derivePetGenome(seed, evolutionSeed);
+}
+
 bool writePpm(Arduino_Canvas &canvas, const char *path) {
   FILE *f = fopen(path, "wb");
   if (!f) return false;
@@ -101,7 +107,10 @@ namespace {
 const char *kPageNames =
     "companion|status|egg|settings|settings2|"
     "settings-brightness|settings-idle|settings-volume|settings-wake|"
-    "settings-theme|settings-boot|genomelab";
+    "settings-theme|settings-boot|genomelab|"
+    "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
+    "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
+    "[stage] arg becomes the results page)";
 
 void seedTestSettings() {
   settings = DeviceSettings{};
@@ -166,6 +175,71 @@ int main(int argc, char **argv) {
   } else if (strcmp(page, "genomelab") == 0) {
     seedTestPet(stage);
     drawGenomeLabPage();
+  } else if (strncmp(page, "battle-", 7) == 0) {
+    seedTestPet(2);
+    const char *scenario = page + 7;
+    const PetGenome opponentGenome = opponentTestGenome();
+
+    const bool isFightOrResult =
+        strncmp(scenario, "fight", 5) == 0 || strncmp(scenario, "result", 6) == 0;
+    if (isFightOrResult) {
+      // drawBattlingLayout is a sub-component (see its own comment) -- the
+      // real drawBattlePage() always wraps it in the backdrop/title/page-dots
+      // every other page gets. drawBattleResultsPage (the picker), below,
+      // already does this itself.
+      paintPageBackdrop();
+      drawCentered("LINK BATTLE", 16, 3, COLOR_MINT);
+    }
+
+    if (strcmp(scenario, "fight") == 0 || strcmp(scenario, "fight-highstats") == 0 ||
+        strcmp(scenario, "fight-lowhp") == 0 || strcmp(scenario, "fight-submitted") == 0 ||
+        strcmp(scenario, "fight-fleearmed") == 0 || strcmp(scenario, "fight-nogenome") == 0) {
+      uint16_t myHp = 24, myMaxHp = 40, oppHp = 31, oppMaxHp = 40;
+      uint8_t oppLevel = 5;
+      bool moveSubmitted = false, fleeArmed = false, hasGenome = true;
+      const char *log1 = "You: ATTACK -6 dmg";
+      const char *log2 = "Opp: DEFEND";
+      if (strcmp(scenario, "fight-highstats") == 0) {
+        myHp = 317; myMaxHp = 317; oppHp = 317; oppMaxHp = 317; oppLevel = 99;
+        log1 = "You: SPECIAL -142 dmg"; log2 = "Opp: SPECIAL MISSED";
+      } else if (strcmp(scenario, "fight-lowhp") == 0) {
+        myHp = 2; myMaxHp = 40; oppHp = 1; oppMaxHp = 40;
+      } else if (strcmp(scenario, "fight-submitted") == 0) {
+        moveSubmitted = true;
+      } else if (strcmp(scenario, "fight-fleearmed") == 0) {
+        fleeArmed = true;
+      } else if (strcmp(scenario, "fight-nogenome") == 0) {
+        hasGenome = false;
+      }
+      drawBattlingLayout(myHp, myMaxHp, oppHp, oppMaxHp, oppLevel, true, log1, log2,
+                         /*isResult=*/false, moveSubmitted, fleeArmed,
+                         /*opponentGenomeAvailable=*/hasGenome, /*genomeCopied=*/false,
+                         hasGenome ? &opponentGenome : nullptr);
+    } else if (strcmp(scenario, "result") == 0 || strcmp(scenario, "result-copied") == 0 ||
+               strcmp(scenario, "result-nogenome") == 0) {
+      const bool hasGenome = strcmp(scenario, "result-nogenome") != 0;
+      const bool copied = strcmp(scenario, "result-copied") == 0;
+      drawBattlingLayout(0, 40, 40, 40, 5, true, "", "Opp: ATTACK -24 dmg",
+                         /*isResult=*/true, false, false, hasGenome, copied,
+                         hasGenome ? &opponentGenome : nullptr);
+    } else if (strncmp(scenario, "picker", 6) == 0) {
+      const int count = atoi(scenario + 6);
+      const uint8_t resultPage = argc > 3 ? static_cast<uint8_t>(atoi(argv[3])) : 0;
+      std::vector<FamiliarBattleOpponent> results;
+      const int8_t rssiSamples[] = {-45, -68, -80, -50, -72};
+      for (int i = 0; i < count; ++i) {
+        FamiliarBattleOpponent opponent;
+        opponent.stageIndex = (i % 4) + 1;
+        opponent.level = 3 + i;
+        opponent.rssi = rssiSamples[i % 5];
+        results.push_back(opponent);
+      }
+      drawBattleResultsPage(results, resultPage);
+    } else {
+      fprintf(stderr, "unknown battle scenario '%s'\n", scenario);
+      return 1;
+    }
+    if (isFightOrResult) drawPageDots(PAGE_BATTLE);
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;
