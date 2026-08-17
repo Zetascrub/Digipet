@@ -132,6 +132,8 @@ uint64_t playerIdTimestamp = 0;
 bool showingPlayerId = false;
 bool showingUpdate = false;
 bool showingGenomeProfile = false;
+// See this flag's own comment in ui_pages.h.
+bool genomeProfileShowingData = false;
 bool showingEvolutionDebug = false;
 bool newEggConfirmation = false;
 uint32_t newEggConfirmationUntil = 0;
@@ -225,6 +227,8 @@ void transitionSettingsGrid(uint8_t target);
 void transitionStatusView(bool showActions);
 void transitionStatusActionsGrid(uint8_t target);
 void transitionBattleView(bool showActions);
+void transitionGenomeProfileView(bool showData);
+void presentGenomeProfilePage();
 void performAction(int action);
 void presentOverlayEntrance(Page fromPage, void (*drawOverlay)());
 void presentOverlayExit(void (*drawOverlay)(), Page toPage);
@@ -1516,57 +1520,6 @@ void beginNewEgg(uint8_t mode) {
                 elementName(pet.genome.element));
 }
 
-void drawGenomeProfilePage() {
-  static const char *bodyNames[] = {"QUADRUPED", "HUMANOID", "AVIAN", "BLOB", "SERPENT"};
-  static const char *temperaments[] = {"CALM", "BOLD", "CURIOUS", "LOYAL", "WILD", "CLEVER"};
-  char code[PET_GENOME_CODE_LENGTH + 1]{};
-  encodePetGenome(pet.genome, code, sizeof(code));
-  paintPageBackdrop();
-  drawCentered("GENOME PROFILE", 18, 3, COLOR_MINT);
-  drawCentered(genomeTransferStatus, 52, 1, COLOR_CYAN);
-
-  drawPanelGlow(22, 78, 324, 143, 20, COLOR_CYAN);
-  display->fillRoundRect(22, 78, 324, 143, 20, COLOR_CARD);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(39, 95); display->print("FORM / ELEMENT");
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(39, 111);
-  display->printf("%s // %s", STAGE_NAMES[pet.stage], elementName(pet.genome.element));
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(39, 137); display->print("BODY / TEMPERAMENT");
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(39, 153);
-  display->printf("%s // %s", bodyNames[pet.genome.bodyType % 5],
-                  temperaments[pet.genome.temperament % 6]);
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(39, 179); display->print("HERITABLE TRAITS");
-  display->setTextColor(COLOR_TEXT);
-  display->setCursor(39, 195);
-  display->printf("%u FEATURES // %s", __builtin_popcount(pet.genome.featureGenes),
-                  pet.genome.mutationGenes ? "RARE MUTATION" : "STABLE");
-
-  drawPanelGlow(22, 234, 324, 94, 18, COLOR_PURPLE);
-  display->fillRoundRect(22, 234, 324, 94, 18, COLOR_CARD);
-  display->setTextSize(1);
-  display->setTextColor(COLOR_CYAN);
-  for (uint8_t row = 0; row < 3; ++row) {
-    char segment[21]{};
-    memcpy(segment, code + row * 20, 20);
-    display->setCursor(64, 250 + row * 22);
-    display->print(segment);
-  }
-  display->setTextColor(COLOR_MUTED);
-  display->setCursor(48, 312);
-  display->printf("DESIGN %016llX", static_cast<unsigned long long>(petGenomeDesignId(pet.genome)));
-
-  display->fillRoundRect(18, 344, 160, 40, 12, COLOR_PURPLE);
-  display->fillRoundRect(190, 344, 160, 40, 12, COLOR_CYAN);
-  drawCenteredInRect("EXPORT", 18, 344, 160, 40, 2, readableTextColor(COLOR_PURPLE));
-  drawCenteredInRect("IMPORT COPY", 190, 344, 160, 40, 1, readableTextColor(COLOR_CYAN));
-  display->fillRoundRect(84, 398, 200, 36, 12, COLOR_CARD);
-  drawCenteredInRect("BACK", 84, 398, 200, 36, 2, COLOR_TEXT);
-}
 
 void presentGenomeProfilePage() {
   if (transitionsReady) {
@@ -2215,6 +2168,30 @@ void transitionBattleView(bool showActions) {
   renderPageToCanvas(PAGE_BATTLE, pageCanvasB);
   playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
                       /*vertical=*/true, /*enterFromEnd=*/showActions, 18);
+}
+
+// Same "peer sub-views, swipe between them" shape as transitionStatusView()/
+// transitionBattleView() above, for the Genome Profile overlay -- except
+// this one isn't one of the 5 swipeable pages, so there's no Page enum
+// value to hand renderPageToCanvas(); drawGenomeProfilePage() is called
+// directly into each canvas instead, the same way presentOverlayEntrance()
+// already does for a *different* page's content underneath an overlay.
+void transitionGenomeProfileView(bool showData) {
+  if (showData == genomeProfileShowingData) return;
+  if (!transitionsReady) {
+    genomeProfileShowingData = showData;
+    presentGenomeProfilePage();
+    return;
+  }
+  Arduino_GFX *previousDisplay = display;
+  display = &pageCanvasA;
+  drawGenomeProfilePage();
+  genomeProfileShowingData = showData;
+  display = &pageCanvasB;
+  drawGenomeProfilePage();
+  display = previousDisplay;
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/showData, 18);
 }
 
 void presentBattlePage() {
@@ -3267,11 +3244,23 @@ void loop() {
         return;
       }
       if (showingGenomeProfile) {
-        if (touchLastY >= 338 && touchLastY < 393) {
+        // Same two-sub-view swipe shape as PAGE_STATUS/PAGE_BATTLE's own
+        // vertical-swipe handling -- see genomeProfileShowingData's own
+        // comment in ui_pages.h.
+        if (abs(deltaY) > 55 && abs(deltaY) > abs(deltaX)) {
+          if (deltaY < 0 && !genomeProfileShowingData) {
+            playTone(988, 30, 30);
+            transitionGenomeProfileView(true);
+          } else if (deltaY > 0 && genomeProfileShowingData) {
+            playTone(784, 30, 30);
+            transitionGenomeProfileView(false);
+          }
+        } else if (genomeProfileShowingData && touchLastY >= 270 && touchLastY < 316) {
           if (touchLastX < LCD_WIDTH / 2) exportActiveGenome();
           else importCopiedGenome();
           presentGenomeProfilePage();
-        } else if (touchLastY >= 393 || deltaX > 55) {
+        } else if ((genomeProfileShowingData && touchLastY >= 393) ||
+                   (!genomeProfileShowingData && deltaX > 55)) {
           showingGenomeProfile = false;
           presentOverlayExit(drawGenomeProfilePage, genomeProfileReturnPage);
         }
@@ -3391,6 +3380,10 @@ void loop() {
                  touchStartY >= 90 && touchStartY <= 358) {
         genomeProfileReturnPage = PAGE_COMPANION;
         showingGenomeProfile = true;
+        // Always opens on the identity sub-view -- see transitionStatusView()'s
+        // own comment on why landing wherever it was last left would be a
+        // worse surprise than always starting at the top.
+        genomeProfileShowingData = false;
         presentOverlayEntrance(PAGE_COMPANION, drawGenomeProfilePage);
       } else if (currentPage == PAGE_STATUS && statusShowingActions) {
         handleStatusGridTap(touchLastX, touchLastY);

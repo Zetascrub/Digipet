@@ -58,6 +58,8 @@ BattleStats battleStats{};
 ReconLog reconLog{};
 FriendsList friendsList{};
 Inventory inventory{};
+bool genomeProfileShowingData = false;
+char genomeTransferStatus[32] = "NO COPIED GENOME";
 bool statusShowingActions = false;
 uint8_t statusActionsPage = 0;
 
@@ -119,7 +121,7 @@ const char *kPageNames =
     "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
     "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
     "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]|"
-    "friends[-empty]|items[-empty]";
+    "friends[-empty]|items[-empty]|genome-identity|genome-data";
 
 void seedTestSettings() {
   settings = DeviceSettings{};
@@ -388,6 +390,15 @@ int main(int argc, char **argv) {
     pet.bonusDefense = 0;
     pet.bonusSpecial = 4;
     drawItemsPage();
+  } else if (strcmp(page, "genome-identity") == 0) {
+    seedTestPet(stage);
+    genomeProfileShowingData = false;
+    drawGenomeProfilePage();
+  } else if (strcmp(page, "genome-data") == 0) {
+    seedTestPet(stage);
+    genomeProfileShowingData = true;
+    strncpy(genomeTransferStatus, "COPIED GENOME READY", sizeof(genomeTransferStatus) - 1);
+    drawGenomeProfilePage();
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;

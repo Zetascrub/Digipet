@@ -1194,6 +1194,98 @@ void drawGenomeLabPage() {
 }
 
 
+static const char *kGenomeBodyNames[] = {"QUADRUPED", "HUMANOID", "AVIAN", "BLOB", "SERPENT"};
+static const char *kGenomeTemperaments[] = {"CALM", "BOLD", "CURIOUS", "LOYAL", "WILD", "CLEVER"};
+
+// The identity sub-view -- see genomeProfileShowingData's own comment in
+// ui_pages.h. Six rows, one trait each, all label-size-matches-value (see
+// docs/style-guide.md's Typography section) -- replaces the old single
+// panel that crammed two traits per row together with "//" because there
+// wasn't room for six rows at a readable size. There is now: this is the
+// exact row geometry drawBattleStatsView() uses (kFirstRowY=96,
+// kRowPitch=36, panel 22,76,324,260), just with genome traits instead of
+// battle stats.
+void drawGenomeIdentityView() {
+  drawCentered("IDENTITY", 51, 1, COLOR_CYAN);
+
+  drawPanelGlow(22, 76, 324, 260, 26, COLOR_CYAN);
+  display->fillRoundRect(22, 76, 324, 260, 26, COLOR_CARD);
+
+  char traitCount[4];
+  snprintf(traitCount, sizeof(traitCount), "%u", __builtin_popcount(pet.genome.featureGenes));
+
+  const char *labels[] = {"FORM", "ELEMENT", "BODY", "TEMPERAMENT", "TRAITS", "MUTATION"};
+  const char *values[] = {
+      STAGE_NAMES[pet.stage],
+      elementName(pet.genome.element),
+      kGenomeBodyNames[pet.genome.bodyType % 5],
+      kGenomeTemperaments[pet.genome.temperament % 6],
+      traitCount,
+      pet.genome.mutationGenes ? "RARE" : "STABLE",
+  };
+  constexpr int16_t kFirstRowY = 96;
+  constexpr int16_t kRowPitch = 36;
+  for (uint8_t i = 0; i < 6; ++i) {
+    const int16_t y = kFirstRowY + i * kRowPitch;
+    display->setTextSize(2);
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(46, y - 7);
+    display->print(labels[i]);
+    drawCenteredInRect(values[i], 190, y - 7, 136, 22, 2, COLOR_TEXT);
+  }
+
+  drawCentered("SWIPE UP FOR GENOME DATA", 356, 1, COLOR_MUTED);
+}
+
+// The genome-data sub-view -- the 60-character code (now at size 2, was 1
+// -- "IPMFC25BCC7E" etc. is exactly the kind of string that needs to be
+// unambiguous, not just legible), design ID, and the EXPORT/IMPORT COPY
+// actions (also now both size 2 -- they were a 1-vs-2 mismatch before,
+// the same bug class as drawBattlingLayout()'s old COPY GENOME/RETURN
+// pair). BACK button hit-test region (main.cpp) keys off this exact
+// 84,398,200,36 rect, same as before this page's redesign.
+void drawGenomeDataView() {
+  drawCentered(genomeTransferStatus, 51, 1, COLOR_CYAN);
+
+  char code[PET_GENOME_CODE_LENGTH + 1]{};
+  encodePetGenome(pet.genome, code, sizeof(code));
+  drawPanelGlow(14, 82, 340, 116, 22, COLOR_PURPLE);
+  display->fillRoundRect(14, 82, 340, 116, 22, COLOR_CARD);
+  display->setTextSize(2);
+  display->setTextColor(COLOR_CYAN);
+  for (uint8_t row = 0; row < 3; ++row) {
+    char segment[21]{};
+    memcpy(segment, code + row * 20, 20);
+    drawCenteredInRect(segment, 14, 92 + row * 34, 340, 24, 2, COLOR_CYAN);
+  }
+
+  char designLine[32];
+  snprintf(designLine, sizeof(designLine), "DESIGN %016llX",
+           static_cast<unsigned long long>(petGenomeDesignId(pet.genome)));
+  drawCentered(designLine, 218, 1, COLOR_MUTED);
+
+  drawCentered("SWIPE DOWN FOR IDENTITY", 244, 1, COLOR_MUTED);
+
+  display->fillRoundRect(18, 270, 160, 46, 14, COLOR_PURPLE);
+  display->fillRoundRect(190, 270, 160, 46, 14, COLOR_CYAN);
+  drawCenteredInRect("EXPORT", 18, 270, 160, 46, 2, readableTextColor(COLOR_PURPLE));
+  drawCenteredInRect("IMPORT COPY", 190, 270, 160, 46, 2, readableTextColor(COLOR_CYAN));
+
+  display->fillRoundRect(84, 398, 200, 36, 12, COLOR_CARD);
+  drawCenteredInRect("BACK", 84, 398, 200, 36, 2, COLOR_TEXT);
+}
+
+void drawGenomeProfilePage() {
+  paintPageBackdrop();
+  drawCentered("GENOME PROFILE", 18, 3, COLOR_MINT);
+  if (genomeProfileShowingData) {
+    drawGenomeDataView();
+  } else {
+    drawGenomeIdentityView();
+  }
+}
+
+
 // Hand-pixelled to match STAT_ICONS' style: a blade for Attack, a shield
 // outline for Defend, a burst for Special, and an exit arrow for Flee.
 

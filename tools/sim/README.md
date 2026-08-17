@@ -37,6 +37,8 @@ tools/sim/render.sh friends /tmp/friends.png 5        # [stage] arg = friend cou
 tools/sim/render.sh friends-empty /tmp/friends-empty.png
 tools/sim/render.sh items /tmp/items.png              # fixed sample counts/bonuses
 tools/sim/render.sh items-empty /tmp/items-empty.png
+tools/sim/render.sh genome-identity /tmp/genome-id.png    # Genome Profile, identity sub-view
+tools/sim/render.sh genome-data /tmp/genome-data.png      #  ...genome-code/EXPORT/IMPORT sub-view
 
 # Any of the above also takes a 4th [theme] arg -- cyber-mint|amber-core|
 # violet-link|mono-signal, or a kThemes[] index 1-4 (see include/ui_pages.h)

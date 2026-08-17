@@ -98,6 +98,21 @@ extern uint8_t statusActionsPage;
 // transitionBattleView() is what flips it.
 extern bool battleShowingActions;
 
+// Same "peer sub-views, swipe between them" shape again, for the Genome
+// Profile overlay: false is identity (FORM/ELEMENT/BODY/TEMPERAMENT/
+// TRAITS/MUTATION, one per row, all at once instead of two per row jammed
+// together with "//"), true is genome data (the 60-character code,
+// design ID, and the EXPORT/IMPORT COPY actions). drawGenomeProfilePage()
+// is the dispatcher (this file); main.cpp's transitionGenomeProfileView()
+// flips this and its own exportActiveGenome()/importCopiedGenome() (SD
+// card I/O, hardware territory) stay there.
+extern bool genomeProfileShowingData;
+// SD export/import's own one-line status ("EXPORTED TO SD", "COPIED
+// GENOME READY", ...), shown on the data sub-view above. Definition
+// (main.cpp) also updates it from exportActiveGenome()/
+// importCopiedGenome(), which is why it isn't just a return value.
+extern char genomeTransferStatus[32];
+
 extern uint16_t COLOR_BACKGROUND;
 extern uint16_t COLOR_CARD;
 extern uint16_t COLOR_MINT;
@@ -444,3 +459,10 @@ void drawCompanionPage();
 void drawStatusPage();
 void drawSettingsPage();
 void drawGenomeLabPage();
+
+// A full-screen overlay (tapped open from the Companion page's creature
+// portrait, dismissed by swiping right -- see main.cpp), not one of the 5
+// swipeable pages, same as the Player ID/OTA update/evolution debug
+// overlays already are. Dispatches between its own two sub-views -- see
+// genomeProfileShowingData's own comment above.
+void drawGenomeProfilePage();
