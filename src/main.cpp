@@ -24,7 +24,8 @@
 
 constexpr uint32_t PET_MAGIC_V1 = 0x44504731;
 constexpr uint32_t PET_MAGIC_V2 = 0x44504732;
-constexpr uint32_t PET_MAGIC = 0x44504733;
+constexpr uint32_t PET_MAGIC_V3 = 0x44504733;  // no bonusHp/Attack/Defense/Special fields yet
+constexpr uint32_t PET_MAGIC = 0x44504734;
 constexpr uint32_t ANIMATION_MS = 650;
 constexpr uint32_t SETTINGS_MAGIC_V1 = 0x44505331;
 constexpr uint32_t SETTINGS_MAGIC_V2 = 0x44505332;
@@ -172,6 +173,17 @@ bool showingFriends = false;
 
 // See this flag's own comment in ui_pages.h.
 bool statusShowingActions = false;
+// See this variable's own comment in ui_pages.h.
+uint8_t statusActionsPage = 0;
+
+// Not a per-device record like the ones above -- items are earned by and
+// belong to the current companion the same way food/joy do, so this reads
+// more like DeviceSettings' shape (single magic-guarded blob, no capped
+// array of entries) than BattleStats'.
+constexpr uint32_t INVENTORY_MAGIC = 0x49544D31;  // "ITM" + schema 1
+
+Inventory inventory{};
+bool showingItems = false;
 
 // Sets `message` and arms drawToastOverlay() to show it as a slide-down
 // banner on whichever of the five main pages is on screen next -- see the
@@ -208,6 +220,7 @@ void presentCoherentPageFrame(Page page);
 void transitionSettingsView(SettingsView target, bool forward);
 void transitionSettingsGrid(uint8_t target);
 void transitionStatusView(bool showActions);
+void transitionStatusActionsGrid(uint8_t target);
 void performAction(int action);
 void presentOverlayEntrance(Page fromPage, void (*drawOverlay)());
 void presentOverlayExit(void (*drawOverlay)(), Page toPage);
@@ -909,6 +922,89 @@ void addFriend(uint32_t playerId) {
   saveFriendsList();
 }
 
+void saveInventory() {
+  preferences.putBytes("inventory", &inventory, sizeof(inventory));
+}
+
+void loadInventory() {
+  if (preferences.getBytesLength("inventory") == sizeof(inventory)) {
+    preferences.getBytes("inventory", &inventory, sizeof(inventory));
+  }
+  if (inventory.magic != INVENTORY_MAGIC) {
+    inventory = Inventory{};
+    inventory.magic = INVENTORY_MAGIC;
+  }
+}
+
+// Each point of boost this app hands out this way is deliberately small
+// (matching addClamped()'s own care-stat scale being 0-100, not this) --
+// the cap keeps FEED-farmed items from turning battles into a pure
+// time-investment contest.
+constexpr uint8_t kItemBonusStep = 2;
+constexpr uint8_t kItemBonusCap = 30;
+
+// Consumes one of `item`, applying its effect immediately -- items are used
+// the instant they're tapped in drawItemsPage(), not equipped/held for
+// later. No-op if none are held. See ItemType's own comment in ui_pages.h
+// for why HP/ATK/DEF/SPECIAL are a shared numeric-boost shape and
+// TYPE_SHIFT (a genome.element reroll) isn't.
+//
+// pet.bonusHp/Attack/Defense/Special only ever affect this device's own
+// displays and locally-initiated battles (drawBattlePage()'s Idle-state
+// stat line, battleCapabilities() for Special) -- a deliberate scope
+// decision, not a limitation of how the values could flow: capabilities.
+// special is transmitted directly to an opponent already (sendCapabilities())
+// so a Special boost would in fact reach a live PvP battle correctly with
+// no protocol change, but HP/ATK/DEF are independently *recomputed* by
+// each side from transmitted level/stage (deriveMaxHp/deriveAttack/
+// deriveDefense), not transmitted as raw numbers -- boosting only this
+// device's own myMaxHp_/myAttack_/myDefense_ without also telling the peer
+// would desync what each side thinks this pet's stats are. Keeping all
+// four consistent (none of them affect a live battle yet) avoids the
+// confusing "why did my Special item work in a real battle but not my ATK
+// one" asymmetry that treating them differently would create.
+void useItem(uint8_t item) {
+  if (item >= kItemTypeCount || inventory.counts[item] == 0) return;
+  --inventory.counts[item];
+  saveInventory();
+
+  if (item == ITEM_TYPE_SHIFT) {
+    const uint8_t previous = pet.genome.element;
+    uint8_t next = previous;
+    while (next == previous) next = esp_random() % 6;
+    pet.genome.element = next;
+    showToastf("Element shifted to %s", elementName(pet.genome.element));
+  } else {
+    uint8_t *bonus = item == ITEM_HP_BOOST ? &pet.bonusHp :
+                     item == ITEM_ATK_BOOST ? &pet.bonusAttack :
+                     item == ITEM_DEF_BOOST ? &pet.bonusDefense : &pet.bonusSpecial;
+    *bonus = min<uint8_t>(kItemBonusCap, *bonus + kItemBonusStep);
+    const char *labels[] = {"HP", "ATK", "DEF", "SPECIAL"};
+    showToastf("%s boosted to +%u", labels[item], *bonus);
+  }
+  playTone(659, 60, 40);
+  playTone(880, 90, 45);
+  savePet();
+}
+
+// Rolled once per FEED scan that turns up at least one never-seen-before
+// device (performFeedScan(), see its own comment) -- a flat chance, not
+// scaled by how many new devices were found, so spamming scans in a
+// device-dense area isn't strictly better than one scan somewhere new.
+constexpr uint8_t kItemDropPercent = 20;
+
+void maybeAwardItem() {
+  if (esp_random() % 100 >= kItemDropPercent) return;
+  const uint8_t item = esp_random() % kItemTypeCount;
+  ++inventory.counts[item];
+  saveInventory();
+  static const char *names[] = {"HP BOOST", "ATK BOOST", "DEF BOOST", "SPECIAL BOOST",
+                                "TYPE SHIFT"};
+  showToastf("Mutation trigger found: %s", names[item]);
+  playTone(988, 50, 40);
+  playTone(1319, 90, 50);
+}
+
 // Finds `playerId`'s rival slot, adding a new one if this is a first-time
 // opponent. Once all kMaxBattleRivals slots are full, reuses whichever
 // rival has the fewest recorded battles -- a simple "keep the rivalries
@@ -1015,6 +1111,22 @@ void loadPet() {
   if (storedSize == sizeof(pet)) {
     preferences.getBytes("state", &pet, sizeof(pet));
   } else if (storedSize > 0) {
+    // PET_MAGIC's own current layout, minus the bonusHp/Attack/Defense/
+    // Special fields the Items feature added -- everyone's stored pet was
+    // this shape immediately before today.
+    struct StateV3 {
+      uint32_t magic;
+      uint32_t ageMinutes;
+      uint32_t actions;
+      uint8_t food;
+      uint8_t joy;
+      uint8_t energy;
+      uint8_t health;
+      uint8_t stage;
+      uint8_t training;
+      uint8_t reserved[2];
+      PetGenome genome;
+    } v3{};
     struct StateV2 {
       uint32_t magic;
       uint32_t ageMinutes;
@@ -1031,25 +1143,32 @@ void loadPet() {
       uint32_t magic, ageMinutes, actions;
       uint8_t food, joy, energy, health;
     } old{};
-    if (storedSize == sizeof(previous)) {
+    if (storedSize == sizeof(v3)) {
+      preferences.getBytes("state", &v3, sizeof(v3));
+    } else if (storedSize == sizeof(previous)) {
       preferences.getBytes("state", &previous, sizeof(previous));
     }
-    if (previous.magic == PET_MAGIC_V2) {
+    if (v3.magic == PET_MAGIC_V3) {
+      pet = {PET_MAGIC, v3.ageMinutes, v3.actions, v3.food, v3.joy, v3.energy,
+             v3.health, v3.stage, v3.training, {v3.reserved[0], v3.reserved[1]},
+             0, 0, 0, 0, v3.genome};
+      Serial.println("Pet: existing companion gained battle-stat item slots");
+    } else if (previous.magic == PET_MAGIC_V2) {
       pet = {PET_MAGIC, previous.ageMinutes, previous.actions, previous.food,
              previous.joy, previous.energy, previous.health, previous.stage,
              previous.training, {previous.reserved[0], previous.reserved[1]},
-             generatePetGenome()};
+             0, 0, 0, 0, generatePetGenome()};
       Serial.println("Pet: existing companion received a persistent genome");
     } else if (storedSize >= sizeof(old)) {
       preferences.getBytes("state", &old, sizeof(old));
     }
     if (old.magic == PET_MAGIC_V1) {
       pet = {PET_MAGIC, old.ageMinutes, old.actions, old.food, old.joy,
-             old.energy, old.health, 1, 0, {0, 0}, generatePetGenome()};
+             old.energy, old.health, 1, 0, {0, 0}, 0, 0, 0, 0, generatePetGenome()};
     }
   }
   if (pet.magic != PET_MAGIC) {
-    pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {0, 0},
+    pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {0, 0}, 0, 0, 0, 0,
            generatePetGenome()};
     Serial.printf("Pet: new %s selected (%s affinity)\n",
                   eggLineageName(pet.genome.lineage),
@@ -1350,14 +1469,32 @@ void beginNewEgg(uint8_t mode) {
   if (mode == 2 && hasCopiedGenome) nextGenome = copiedGenome;
   if (mode == 3 && hasCopiedGenome)
     nextGenome = blendPetGenomes(pet.genome, copiedGenome);
+
+  // A companion that reached the final stage has a 50% chance to pass half
+  // its item-earned battle stats on to the next egg -- reaching stage 4 is
+  // the bar, not a guarantee of inheritance itself, so hatching still
+  // feels like starting over most of the time rather than every stat grind
+  // compounding forever across generations.
+  uint8_t inheritedHp = 0, inheritedAttack = 0, inheritedDefense = 0, inheritedSpecial = 0;
+  if (pet.stage == 4 && esp_random() % 100 < 50) {
+    inheritedHp = pet.bonusHp / 2;
+    inheritedAttack = pet.bonusAttack / 2;
+    inheritedDefense = pet.bonusDefense / 2;
+    inheritedSpecial = pet.bonusSpecial / 2;
+  }
+  const bool inherited =
+      inheritedHp || inheritedAttack || inheritedDefense || inheritedSpecial;
+
   pet = {PET_MAGIC, 0, 0, 82, 82, 82, 100, 0, 0, {5, 0},
-         nextGenome};
+         inheritedHp, inheritedAttack, inheritedDefense, inheritedSpecial, nextGenome};
   savePet();
   if (settings.themeIndex == 0) applyTheme();
   newEggConfirmation = false;
   pendingHatchMode = 0;
   newEggConfirmationUntil = 0;
-  showToastf("%s signal acquired", eggLineageName(pet.genome.lineage));
+  showToastf(inherited ? "%s signal acquired -- stats inherited!"
+                       : "%s signal acquired",
+             eggLineageName(pet.genome.lineage));
   playTone(392, 70, 40);
   playTone(523, 70, 45);
   playTone(784, 130, 50);
@@ -1549,9 +1686,13 @@ void drawBattlePage() {
     display->setTextSize(1);
     display->setTextColor(COLOR_CYAN);
     display->setCursor(24, 51);
-    display->printf("LV 5  HP 35  ATK %u  DEF %u",
-                    FamiliarBattleService::deriveAttack(5, pet.stage),
-                    FamiliarBattleService::deriveDefense(5, pet.stage));
+    // Item bonuses (pet.bonusHp/Attack/Defense) fold in here for display --
+    // see useItem()'s own comment on why they don't (yet) travel over BLE
+    // into what a real opponent's device computes for these same numbers.
+    display->printf("LV 5  HP %u  ATK %u  DEF %u",
+                    FamiliarBattleService::deriveMaxHp(5) + pet.bonusHp,
+                    FamiliarBattleService::deriveAttack(5, pet.stage) + pet.bonusAttack,
+                    FamiliarBattleService::deriveDefense(5, pet.stage) + pet.bonusDefense);
     display->setTextColor(COLOR_MUTED);
     display->setCursor(24, 64);
     display->printf("RECORD %luW-%luL", (unsigned long)battleStats.wins,
@@ -2018,6 +2159,12 @@ void transitionSettingsGrid(uint8_t target) {
 // just above -- see statusShowingActions' own comment in ui_pages.h.
 void transitionStatusView(bool showActions) {
   if (showActions == statusShowingActions) return;
+  // Always lands on the grid's first page -- landing wherever it was last
+  // left, the way settingsGridPage persists across leaving/re-entering
+  // Settings, would mean the summary's own "SWIPE UP FOR ACTIONS" hint
+  // sometimes silently skips straight to ITEMS instead of FEED/PLAY/TRAIN,
+  // which is a worse surprise than always starting at the top.
+  statusActionsPage = 0;
   if (!transitionsReady) {
     statusShowingActions = showActions;
     drawStatusPage();
@@ -2028,6 +2175,25 @@ void transitionStatusView(bool showActions) {
   renderPageToCanvas(PAGE_STATUS, pageCanvasB);
   playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
                       /*vertical=*/true, /*enterFromEnd=*/showActions, 18);
+}
+
+// Same "peer sub-views, swipe between them" shape as transitionSettingsGrid()
+// -- only meaningful while statusShowingActions is true, same relationship
+// settingsGridPage has with settingsView == SETTINGS_HOME.
+void transitionStatusActionsGrid(uint8_t target) {
+  target = min<uint8_t>(target, 1);
+  if (target == statusActionsPage) return;
+  if (!transitionsReady) {
+    statusActionsPage = target;
+    drawStatusPage();
+    return;
+  }
+  const bool upward = target > statusActionsPage;
+  renderPageToCanvas(PAGE_STATUS, pageCanvasA);
+  statusActionsPage = target;
+  renderPageToCanvas(PAGE_STATUS, pageCanvasB);
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/upward, 18);
 }
 
 void presentBattlePage() {
@@ -2116,10 +2282,15 @@ void handleStatusGridTap(int16_t x, int16_t y) {
   if (y < 78 || y >= 364) return;
   const uint8_t column = x >= LCD_WIDTH / 2;
   const uint8_t row = y >= 227;
-  const uint8_t tile = row * 2 + column;
+  const uint8_t tile = statusActionsPage * 4 + row * 2 + column;
   if (tile == 3) {
     showingReconLog = true;
     presentOverlayEntrance(PAGE_STATUS, drawReconLogPage);
+  } else if (tile == 4) {
+    showingItems = true;
+    presentOverlayEntrance(PAGE_STATUS, drawItemsPage);
+  } else if (tile >= 5) {
+    // Reserved-for-later locked tiles -- nothing to do yet.
   } else {
     performAction(tile);
   }
@@ -2393,6 +2564,9 @@ void performAction(int action) {
     pet.joy = addClamped(pet.joy, static_cast<uint8_t>(scan.newCount * 2));
     pet.energy = addClamped(pet.energy, 2);
     showToastf("SCAN: %u seen, %u new (+%u food)", totalSeen, scan.newCount, foodGain);
+    // Overwrites the toast just set above with its own if it hits -- an
+    // item find is the more exciting outcome, worth being the one shown.
+    if (scan.newCount > 0) maybeAwardItem();
   } else if (action == 1) {
     if (pet.energy < 8) {
       showToast("Too tired to play");
@@ -2698,6 +2872,43 @@ void handleFriendsTap(int16_t x, int16_t y) {
   }
 }
 
+// Refreshes the still-open Items overlay in place after useItem() changes
+// its count/bonus display -- same "plain hard blit, no slide" shape as
+// presentGenomeProfilePage()'s own EXPORT/IMPORT-triggered refresh, for the
+// same reason: this is a redraw of an already-open overlay, not an
+// open/close transition.
+void presentItemsPage() {
+  if (transitionsReady) {
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasA;
+    drawItemsPage();
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+  } else {
+    drawItemsPage();
+  }
+}
+
+// The Items overlay's row taps (see drawItemsPage()'s own prototype
+// comment for why this uses an explicit BACK button, y >= 375 here,
+// instead of Rivals/Recon Log/Friends' tap-anywhere dismissal) and its
+// per-item hit-test rows, keyed off that function's exact kFirstRowY/
+// kRowHeight geometry.
+void handleItemsTap(int16_t x, int16_t y) {
+  if (y >= 375) {
+    showingItems = false;
+    presentOverlayExit(drawItemsPage, PAGE_STATUS);
+    return;
+  }
+  constexpr int16_t kFirstRowY = 76;
+  constexpr int16_t kRowHeight = 52;
+  if (y < kFirstRowY) return;
+  const uint8_t row = (y - kFirstRowY) / kRowHeight;
+  if (row >= kItemTypeCount) return;
+  useItem(row);
+  presentItemsPage();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(100);
@@ -2711,6 +2922,7 @@ void setup() {
   loadBattleStats();
   loadReconLog();
   loadFriendsList();
+  loadInventory();
   applyTheme();
   char genomeSelfTest[PET_GENOME_CODE_LENGTH + 1]{};
   PetGenome decodedSelfTest{};
@@ -2850,7 +3062,7 @@ void loop() {
   } else if (!sleeping && toastVisible && !showingEvolutionDebug &&
              !showingGenomeProfile && !showingPlayerId && !showingUpdate &&
              !showingBattleResults && !showingRivals && !showingReconLog &&
-             !showingFriends &&
+             !showingFriends && !showingItems &&
              (currentPage == PAGE_STATUS || currentPage == PAGE_BATTLE ||
               currentPage == PAGE_SETTINGS) &&
              now - lastAnimation >= 30) {
@@ -2982,6 +3194,11 @@ void loop() {
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
+      if (showingItems) {
+        handleItemsTap(touchLastX, touchLastY);
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       if (showingGenomeProfile) {
         if (touchLastY >= 338 && touchLastY < 393) {
           if (touchLastX < LCD_WIDTH / 2) exportActiveGenome();
@@ -3012,12 +3229,28 @@ void loop() {
         return;
       }
       if (currentPage == PAGE_STATUS && abs(deltaY) > 55 && abs(deltaY) > abs(deltaX)) {
-        if (deltaY < 0 && !statusShowingActions) {
-          playTone(988, 30, 30);
-          transitionStatusView(true);
-        } else if (deltaY > 0 && statusShowingActions) {
-          playTone(784, 30, 30);
-          transitionStatusView(false);
+        // Three linear steps -- summary, actions page 1, actions page 2 --
+        // swiped through in sequence, same shape Settings' HOME grid uses
+        // for its own two pages, just with the summary as an extra step
+        // before the grid rather than the grid being the whole page.
+        // Bounded at each end (swipe up already on page 2, or down already
+        // on the summary) rather than wrapping.
+        if (deltaY < 0) {
+          if (!statusShowingActions) {
+            playTone(988, 30, 30);
+            transitionStatusView(true);
+          } else if (statusActionsPage == 0) {
+            playTone(988, 30, 30);
+            transitionStatusActionsGrid(1);
+          }
+        } else {
+          if (statusShowingActions && statusActionsPage == 1) {
+            playTone(784, 30, 30);
+            transitionStatusActionsGrid(0);
+          } else if (statusShowingActions) {
+            playTone(784, 30, 30);
+            transitionStatusView(false);
+          }
         }
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;

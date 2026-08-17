@@ -144,18 +144,23 @@ void drawRadarIcon(int16_t cx, int16_t cy, uint16_t color) {
 // COLOR_CYAN/COLOR_PURPLE) so the two grids -- Settings' and this one --
 // read as the same kind of control.
 void drawActionTile(uint8_t action, int16_t x, int16_t y, const char *label,
-                    const char *value) {
-  const uint16_t accent = action & 1 ? COLOR_PURPLE : COLOR_CYAN;
+                    const char *value, bool locked) {
+  const uint16_t accent = locked ? COLOR_MUTED : (action & 1 ? COLOR_PURPLE : COLOR_CYAN);
+  const uint16_t fill = locked ? scaleRgb565(COLOR_CARD, 55) : COLOR_CARD;
   drawPanelGlow(x, y, 160, 137, 20, accent);
-  display->fillRoundRect(x, y, 160, 137, 20, COLOR_CARD);
+  display->fillRoundRect(x, y, 160, 137, 20, fill);
   display->drawRoundRect(x, y, 160, 137, 20, accent);
+  const uint16_t iconColor = locked ? COLOR_MUTED : COLOR_MINT;
   if (action == 3) {
-    drawRadarIcon(x + 80, y + 43, COLOR_MINT);
-  } else {
-    drawStatIcon(static_cast<StatIcon>(action), x + 64, y + 18, COLOR_MINT);
+    drawRadarIcon(x + 80, y + 43, iconColor);
+  } else if (action == 4) {
+    drawSettingsIcon(4, x + 80, y + 43, iconColor);  // "theme palette" icon, reused for ITEMS.
+  } else if (action < 3) {
+    drawStatIcon(static_cast<StatIcon>(action), x + 64, y + 18, iconColor);
   }
+  // action >= 5 (a reserved-for-later placeholder) gets no icon at all.
   display->setTextSize(1);
-  display->setTextColor(COLOR_TEXT);
+  display->setTextColor(locked ? COLOR_MUTED : COLOR_TEXT);
   display->setCursor(x + 16, y + 82);
   display->print(label);
   display->setTextColor(COLOR_MUTED);
@@ -853,14 +858,28 @@ void drawStatusSummaryView() {
 // Unlike Settings' grid this is a single page (4 items, no paging needed).
 void drawStatusActionsView() {
   drawCentered("COMPANION ACTIONS", 18, 3, COLOR_MINT);
-  drawCentered("SELECT AN ACTION // SWIPE DOWN", 51, 1, COLOR_CYAN);
+  drawCentered(statusActionsPage == 0 ? "SELECT AN ACTION // SWIPE UP"
+                                      : "SELECT AN ACTION // SWIPE DOWN",
+               51, 1, COLOR_CYAN);
 
-  drawActionTile(0, 18, 78, "FEED", "SCAN WIFI+BLE");
-  drawActionTile(1, 190, 78, "PLAY", "BOOST JOY");
-  drawActionTile(2, 18, 227, "TRAIN", "BOOST STATS");
-  char reconValue[16];
-  snprintf(reconValue, sizeof(reconValue), "%u SIGNALS", reconLog.entryCount);
-  drawActionTile(3, 190, 227, "RECON LOG", reconValue);
+  if (statusActionsPage == 0) {
+    drawActionTile(0, 18, 78, "FEED", "SCAN WIFI+BLE");
+    drawActionTile(1, 190, 78, "PLAY", "BOOST JOY");
+    drawActionTile(2, 18, 227, "TRAIN", "BOOST STATS");
+    char reconValue[16];
+    snprintf(reconValue, sizeof(reconValue), "%u SIGNALS", reconLog.entryCount);
+    drawActionTile(3, 190, 227, "RECON LOG", reconValue);
+  } else {
+    char itemsValue[16];
+    const uint16_t itemCount = inventory.counts[0] + inventory.counts[1] +
+        inventory.counts[2] + inventory.counts[3] + inventory.counts[4];
+    snprintf(itemsValue, sizeof(itemsValue), "%u HELD", itemCount);
+    drawActionTile(4, 18, 78, "ITEMS", itemsValue);
+    drawActionTile(5, 190, 78, "LOCKED", "COMING SOON", /*locked=*/true);
+    drawActionTile(6, 18, 227, "LOCKED", "COMING SOON", /*locked=*/true);
+    drawActionTile(7, 190, 227, "LOCKED", "COMING SOON", /*locked=*/true);
+  }
+  drawCentered(statusActionsPage == 0 ? "1  /  2" : "2  /  2", 382, 1, COLOR_MUTED);
 }
 
 void drawStatusPage() {
@@ -1438,4 +1457,68 @@ void drawFriendsPage() {
 
   drawBattleButton(18, 378, 154, 54, 16, COLOR_PURPLE, ICON_DEFEND, "HOST");
   drawBattleButton(190, 378, 154, 54, 16, COLOR_CYAN, ICON_SPECIAL, "FIND");
+}
+
+// HP/ATK/DEF/SPECIAL reuse existing glyph icons (drawStatIcon/
+// drawBattleMoveIcon take top-left coords; drawSettingsIcon takes a
+// center, hence the -16 offset on the first three -- see each one's own
+// signature) rather than adding new bitmaps, since they're literally the
+// same stats those icons already represent elsewhere. TYPE_SHIFT reuses
+// the Settings "theme palette" tile icon (multiple colors, already reads
+// as "changes what color/kind this is").
+void drawItemIcon(uint8_t item, int16_t cx, int16_t cy, uint16_t color) {
+  switch (item) {
+    case ITEM_HP_BOOST: drawStatIcon(ICON_HEALTH, cx - 16, cy - 16, color); break;
+    case ITEM_ATK_BOOST: drawBattleMoveIcon(ICON_ATTACK, cx - 16, cy - 16, color); break;
+    case ITEM_DEF_BOOST: drawBattleMoveIcon(ICON_DEFEND, cx - 16, cy - 16, color); break;
+    case ITEM_SPECIAL_BOOST: drawBattleMoveIcon(ICON_SPECIAL, cx - 16, cy - 16, color); break;
+    default: drawSettingsIcon(4, cx, cy, color); break;
+  }
+}
+
+// A full-screen overlay, opened from the Status page's action grid's
+// (page 2) ITEMS tile -- see this function's own prototype comment in
+// ui_pages.h for why it uses an explicit BACK button instead of Rivals/
+// Recon Log/Friends' tap-anywhere dismissal. Row hit-test regions
+// (main.cpp's handleItemsTap()) key off this exact 20/kFirstRowY,kRowHeight
+// grid; the BACK button's off drawSettingsBack()'s own fixed rect.
+void drawItemsPage() {
+  paintPageBackdrop();
+  drawCentered("ITEMS", 18, 3, COLOR_MINT);
+  drawCentered("MUTATION TRIGGERS FOUND VIA SCAN", 51, 1, COLOR_CYAN);
+
+  static const char *names[] = {"HP BOOST", "ATK BOOST", "DEF BOOST", "SPECIAL BOOST",
+                                "TYPE SHIFT"};
+  constexpr int16_t kFirstRowY = 76;
+  constexpr int16_t kRowHeight = 52;
+  for (uint8_t i = 0; i < kItemTypeCount; ++i) {
+    const int16_t y = kFirstRowY + i * kRowHeight;
+    const bool available = inventory.counts[i] > 0;
+    const uint16_t accent = i & 1 ? COLOR_PURPLE : COLOR_CYAN;
+    const uint16_t fill = available ? COLOR_CARD : scaleRgb565(COLOR_CARD, 55);
+    display->fillRoundRect(20, y, 328, 46, 14, fill);
+    display->drawRoundRect(20, y, 328, 46, 14, available ? accent : COLOR_MUTED);
+    drawItemIcon(i, 46, y + 23, available ? accent : COLOR_MUTED);
+
+    display->setTextSize(1);
+    display->setTextColor(available ? COLOR_TEXT : COLOR_MUTED);
+    display->setCursor(74, y + 12);
+    display->print(names[i]);
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(74, y + 28);
+    if (i == ITEM_TYPE_SHIFT) {
+      display->print("REROLLS ELEMENT");
+    } else {
+      const uint8_t currentBonus = i == ITEM_HP_BOOST ? pet.bonusHp :
+                                   i == ITEM_ATK_BOOST ? pet.bonusAttack :
+                                   i == ITEM_DEF_BOOST ? pet.bonusDefense : pet.bonusSpecial;
+      display->printf("+2 (CURRENT +%u)", currentBonus);
+    }
+
+    char countText[6];
+    snprintf(countText, sizeof(countText), "x%u", inventory.counts[i]);
+    drawCenteredInRect(countText, 268, y, 66, 46, 2, available ? COLOR_MINT : COLOR_MUTED);
+  }
+
+  drawSettingsBack();
 }

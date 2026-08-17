@@ -57,7 +57,9 @@ SettingsView settingsView = SETTINGS_HOME;
 BattleStats battleStats{};
 ReconLog reconLog{};
 FriendsList friendsList{};
+Inventory inventory{};
 bool statusShowingActions = false;
+uint8_t statusActionsPage = 0;
 
 bool hasCopiedGenome = false;
 bool newEggConfirmation = false;
@@ -110,13 +112,13 @@ bool writePpm(Arduino_Canvas &canvas, const char *path) {
 namespace {
 
 const char *kPageNames =
-    "companion|status|status-actions|egg|settings|settings2|"
+    "companion|status|status-actions[2]|egg|settings|settings2|"
     "settings-brightness|settings-idle|settings-volume|settings-wake|"
     "settings-theme|settings-boot|genomelab|"
     "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
     "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
     "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]|"
-    "friends[-empty]";
+    "friends[-empty]|items[-empty]";
 
 void seedTestSettings() {
   settings = DeviceSettings{};
@@ -214,6 +216,12 @@ int main(int argc, char **argv) {
   } else if (strcmp(page, "status-actions") == 0) {
     seedTestPet(stage);
     statusShowingActions = true;
+    statusActionsPage = 0;
+    drawStatusPage();
+  } else if (strcmp(page, "status-actions2") == 0) {
+    seedTestPet(stage);
+    statusShowingActions = true;
+    statusActionsPage = 1;
     drawStatusPage();
   } else if (strcmp(page, "egg") == 0) {
     seedTestPet(0);
@@ -358,6 +366,21 @@ int main(int argc, char **argv) {
       friendsList.friends[i] = {ids[i], static_cast<uint32_t>(i * 60)};
     }
     drawFriendsPage();
+  } else if (strcmp(page, "items-empty") == 0) {
+    seedTestPet(stage);
+    inventory = Inventory{};
+    drawItemsPage();
+  } else if (strcmp(page, "items") == 0) {
+    seedTestPet(stage);
+    inventory = Inventory{};
+    inventory.counts[ITEM_HP_BOOST] = 3;
+    inventory.counts[ITEM_ATK_BOOST] = 1;
+    inventory.counts[ITEM_SPECIAL_BOOST] = 2;
+    pet.bonusHp = 8;
+    pet.bonusAttack = 2;
+    pet.bonusDefense = 0;
+    pet.bonusSpecial = 4;
+    drawItemsPage();
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;

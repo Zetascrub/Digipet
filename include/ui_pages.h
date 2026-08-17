@@ -38,6 +38,17 @@ struct PetState {
   uint8_t stage;
   uint8_t training;
   uint8_t reserved[2];
+  // Permanent battle-stat boosts from consumed items (see main.cpp's
+  // Inventory/useItem()) -- HP/ATK/DEF/Special are all boostable the same
+  // way; Type isn't a numeric stat, so an item that changes it (TYPE_SHIFT)
+  // writes genome.element directly instead of a field here. Added in
+  // PET_MAGIC's 4th schema (see main.cpp's own PET_MAGIC_V3/PET_MAGIC
+  // comment) -- not reserved[]'s remaining byte, since these are 4 fields,
+  // not 1.
+  uint8_t bonusHp;
+  uint8_t bonusAttack;
+  uint8_t bonusDefense;
+  uint8_t bonusSpecial;
   PetGenome genome;
 };
 
@@ -61,10 +72,18 @@ extern PetState pet;
 // Status page has two sub-views, the same "peer sub-views, swipe between
 // them, no back button" shape as Settings' own home-grid paging (see
 // transitionSettingsGrid()) rather than a drill-down: false is the stats
-// summary (identity, stat bars, diagnostics), true is the FEED/PLAY/TRAIN/
-// RECON LOG action grid. drawStatusPage() reads this directly; main.cpp's
-// transitionStatusView() is what actually flips it.
+// summary (identity, stat bars, diagnostics), true is the action grid.
+// drawStatusPage() reads this directly; main.cpp's transitionStatusView()
+// is what actually flips it.
 extern bool statusShowingActions;
+
+// The action grid itself is *also* Settings-home-grid-shaped: two pages of
+// four tiles, only meaningful while statusShowingActions is true. Page 0 is
+// FEED/PLAY/TRAIN/RECON LOG; page 1 is ITEMS plus three tiles reserved for
+// future actions (drawn locked/dimmed, same visual language Genome Lab's
+// own unavailable CLONE/BLEND tiles already use). main.cpp's
+// transitionStatusActionsGrid() is what changes this.
+extern uint8_t statusActionsPage;
 
 extern uint16_t COLOR_BACKGROUND;
 extern uint16_t COLOR_CARD;
@@ -158,6 +177,32 @@ struct FriendsList {
   FriendEntry friends[kMaxFriends]{};
 };
 extern FriendsList friendsList;
+
+// A rare bonus drop from FEED's WiFi/BLE signal scan (see main.cpp's
+// performFeedScan()) when it turns up a device never seen before --
+// "mutation trigger" hardware in the wild, in this app's own fiction.
+// HP/ATK/DEF/SPECIAL are numeric boosts, all mandatory in the sense that
+// every one of them maps onto a stat this app's battle math already has
+// (deriveMaxHp/deriveAttack/deriveDefense, FamiliarBattleCapabilities::
+// special) -- a future cross-device sync of these wouldn't need any peer
+// to support something new. TYPE_SHIFT is deliberately last/separate: it
+// rerolls genome.element (a categorical pick, not a number to add to) and
+// isn't a stat any wire-protocol capability negotiation is about, so nothing
+// here assumes a peer device understands it either.
+enum ItemType : uint8_t {
+  ITEM_HP_BOOST,
+  ITEM_ATK_BOOST,
+  ITEM_DEF_BOOST,
+  ITEM_SPECIAL_BOOST,
+  ITEM_TYPE_SHIFT,
+};
+constexpr uint8_t kItemTypeCount = 5;
+
+struct Inventory {
+  uint32_t magic = 0;
+  uint8_t counts[kItemTypeCount]{};
+};
+extern Inventory inventory;
 
 struct DeviceSettings {
   uint32_t magic;
@@ -265,10 +310,12 @@ void drawButton(const char *label, int16_t x);
 // (card + glow + accent outline, alternating COLOR_CYAN/COLOR_PURPLE) but
 // its own icon set: 0-2 reuse drawStatIcon's FOOD/JOY/ENERGY glyphs (FEED/
 // PLAY/TRAIN restore exactly those stats), 3 is a new radar glyph for
-// RECON LOG, drawn inline rather than added to STAT_ICONS since it isn't a
-// pet stat.
+// RECON LOG, 4 reuses the Settings "theme palette" icon for ITEMS, drawn
+// inline rather than added to STAT_ICONS since none of these are pet
+// stats. `locked` (page 2's 3 reserved-for-later tiles) dims the whole
+// tile the same way Genome Lab's own unavailable CLONE/BLEND tiles do.
 void drawActionTile(uint8_t action, int16_t x, int16_t y, const char *label,
-                    const char *value);
+                    const char *value, bool locked = false);
 void drawPageDots(Page active);
 
 // --- Companion creature rendering -----------------------------------------------
@@ -334,6 +381,17 @@ void drawReconLogPage();
 // FamiliarBattleMode::FriendExchange) so starting an exchange doesn't
 // require leaving the page you're looking at the list from.
 void drawFriendsPage();
+
+// Also a full-screen overlay, opened from the Status page's action grid's
+// (page 2) ITEMS tile. Reads inventory directly; tapping an item tile with
+// count > 0 consumes it (main.cpp's useItem()) and re-draws in place --
+// unlike Rivals/Recon Log/Friends this overlay never closes itself on a
+// generic tap, only via the same explicit BACK affordance drawSettingsBack()
+// already established, since accidentally dismissing it mid-Type-reroll-
+// confirmation would be a worse mistake to make than any of those other
+// overlays' contents.
+void drawItemIcon(uint8_t item, int16_t cx, int16_t cy, uint16_t color);
+void drawItemsPage();
 
 // --- Settings ------------------------------------------------------------------
 
