@@ -6,11 +6,14 @@
 // several themes' brighter accent fills. See docs/style-guide.md.
 //
 // The "theme" tests below hardcode each theme's actual color table from
-// src/main.cpp's applyTheme() -- not because color_utils.cpp reads theme
-// state (it doesn't; it's pure color math), but so a future edit to a
-// theme's palette or to pickReadableColor()'s heuristic gets caught here
+// include/ui_pages.h's kThemes[] -- not because color_utils.cpp reads
+// theme state (it doesn't; it's pure color math), but so a future edit to
+// a theme's palette or to pickReadableColor()'s heuristic gets caught here
 // against the concrete colors this app actually ships, not just synthetic
-// extremes. Run with `pio test -e native`.
+// extremes. Run with `pio test -e native`. If kThemes[] changes, these
+// literals need updating to match -- there's no way for this file (which
+// can't include ui_pages.h; that would pull in Arduino/GFX) to read them
+// automatically.
 //
 // Every expected pick below was independently recomputed from
 // rgb565Luma()'s own formula (see the Python cross-check this test file's
@@ -72,8 +75,8 @@ void test_ties_favor_the_dark_option(void) {
 // One test per (theme, accent fill) pair actually used by a button
 // (COLOR_CYAN/COLOR_PURPLE/COLOR_MINT/COLOR_DANGER/COLOR_WARNING/
 // COLOR_MUTED). Expected picks computed from each theme's real text/
-// background colors (src/main.cpp's applyTheme() `themes[]` table) via
-// the same luma-distance rule pickReadableColor implements.
+// background colors (include/ui_pages.h's kThemes[] table) via the same
+// luma-distance rule pickReadableColor implements.
 
 void test_cyber_mint_cyan_picks_background(void) {
   TEST_ASSERT_EQUAL_UINT16(0x0823, pickReadableColor(0x269F, 0xE73C, 0x0823));
@@ -91,7 +94,7 @@ void test_cyber_mint_warning_picks_background(void) {
   TEST_ASSERT_EQUAL_UINT16(0x0823, pickReadableColor(0xFE48, 0xE73C, 0x0823));
 }
 void test_cyber_mint_muted_picks_background(void) {
-  TEST_ASSERT_EQUAL_UINT16(0x0823, pickReadableColor(0x8413, 0xE73C, 0x0823));
+  TEST_ASSERT_EQUAL_UINT16(0x0823, pickReadableColor(0x8433, 0xE73C, 0x0823));
 }
 
 void test_amber_core_cyan_picks_background(void) {
@@ -109,8 +112,8 @@ void test_amber_core_danger_picks_text(void) {
 void test_amber_core_warning_picks_background(void) {
   TEST_ASSERT_EQUAL_UINT16(0x1000, pickReadableColor(0xFFE0, 0xFF9C, 0x1000));
 }
-void test_amber_core_muted_picks_text(void) {
-  TEST_ASSERT_EQUAL_UINT16(0xFF9C, pickReadableColor(0x9B48, 0xFF9C, 0x1000));
+void test_amber_core_muted_picks_background(void) {
+  TEST_ASSERT_EQUAL_UINT16(0x1000, pickReadableColor(0xABCB, 0xFF9C, 0x1000));
 }
 
 void test_violet_link_cyan_picks_background(void) {
@@ -129,7 +132,7 @@ void test_violet_link_warning_picks_background(void) {
   TEST_ASSERT_EQUAL_UINT16(0x080F, pickReadableColor(0xFD86, 0xF73F, 0x080F));
 }
 void test_violet_link_muted_picks_background(void) {
-  TEST_ASSERT_EQUAL_UINT16(0x080F, pickReadableColor(0x8C18, 0xF73F, 0x080F));
+  TEST_ASSERT_EQUAL_UINT16(0x080F, pickReadableColor(0xAD1A, 0xF73F, 0x080F));
 }
 
 void test_mono_signal_cyan_picks_background(void) {
@@ -147,8 +150,8 @@ void test_mono_signal_danger_picks_background(void) {
 void test_mono_signal_warning_picks_background(void) {
   TEST_ASSERT_EQUAL_UINT16(0x0000, pickReadableColor(0xDEFB, 0xFFFF, 0x0000));
 }
-void test_mono_signal_muted_picks_text(void) {
-  TEST_ASSERT_EQUAL_UINT16(0xFFFF, pickReadableColor(0x7BEF, 0xFFFF, 0x0000));
+void test_mono_signal_muted_picks_background(void) {
+  TEST_ASSERT_EQUAL_UINT16(0x0000, pickReadableColor(0x8410, 0xFFFF, 0x0000));
 }
 
 int main(int argc, char **argv) {
@@ -171,7 +174,7 @@ int main(int argc, char **argv) {
   RUN_TEST(test_amber_core_mint_picks_background);
   RUN_TEST(test_amber_core_danger_picks_text);
   RUN_TEST(test_amber_core_warning_picks_background);
-  RUN_TEST(test_amber_core_muted_picks_text);
+  RUN_TEST(test_amber_core_muted_picks_background);
   RUN_TEST(test_violet_link_cyan_picks_background);
   RUN_TEST(test_violet_link_purple_picks_text);
   RUN_TEST(test_violet_link_mint_picks_background);
@@ -183,6 +186,6 @@ int main(int argc, char **argv) {
   RUN_TEST(test_mono_signal_mint_picks_background);
   RUN_TEST(test_mono_signal_danger_picks_background);
   RUN_TEST(test_mono_signal_warning_picks_background);
-  RUN_TEST(test_mono_signal_muted_picks_text);
+  RUN_TEST(test_mono_signal_muted_picks_background);
   return UNITY_END();
 }

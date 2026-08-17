@@ -61,3 +61,13 @@ uint16_t evolvedGenomeFeatures(const PetGenome &genome, uint8_t stage);
 PetPalette paletteForGenome(const PetGenome &genome);
 const char *eggLineageName(uint8_t lineage);
 const char *elementName(uint8_t element);
+
+// A two-part callsign-style name ("NOVA-BYTE", "GLITCH-WISP", ...),
+// deterministic from the genome's own seed bytes -- same "pure function of
+// genome" shape as eggLineageName()/elementName() above, just combining
+// two words instead of indexing one, so it needs an out-buffer rather than
+// returning a fixed string. Nothing new is persisted for this: it's
+// re-derivable from the genome PetState already stores, the same way the
+// egg lineage and element names are.
+constexpr size_t PET_NAME_LENGTH = 24;
+void petDisplayName(const PetGenome &genome, char *output, size_t outputSize);

@@ -41,12 +41,28 @@ become a third place to keep in sync by hand.
 | `COLOR_BACKGROUND` | Page backdrop |
 | `COLOR_CARD` | Card/panel fill — the neutral surface everything else sits on |
 | `COLOR_TEXT` | Default label color, tuned for `COLOR_BACKGROUND`/`COLOR_CARD` only |
-| `COLOR_MUTED` | Secondary/disabled text, unselected outlines |
+| `COLOR_MUTED` | Secondary/disabled text, unselected outlines — see its own contrast note below |
 | `COLOR_MINT` | Primary accent — page titles, primary CTAs |
 | `COLOR_CYAN` | Secondary accent |
 | `COLOR_PURPLE` | Tertiary accent / selected-state fill |
 | `COLOR_WARNING` | Caution state |
 | `COLOR_DANGER` | Destructive/negative state, confirm-to-delete fills |
+
+**`COLOR_MUTED`'s own contrast is checked now, not assumed.** Every fixed
+theme's `COLOR_MUTED` shipped without ever being run through WCAG contrast
+math against the two surfaces it's actually drawn on (`COLOR_CARD`/
+`COLOR_BACKGROUND`) — three of the four landed at 3.1-4.4:1 against
+`COLOR_CARD`, under the 4.5:1 floor for normal-size text, worst in Violet
+Link at 3.11:1. `kThemes[]`'s `muted` field is now the minimal lerp toward
+that theme's own `COLOR_TEXT` that clears 4.5:1 against both surfaces —
+if you touch a fixed theme's palette, re-run the same check (a short
+Python WCAG-contrast script) rather than eyeballing it, the same way
+`readableTextColor()` exists so button fills don't get eyeballed either.
+AUTO's `COLOR_MUTED` gets a lighter-touch version of the same idea
+(blended toward its own `COLOR_TEXT` rather than scaled down from the
+genome's own secondary color) since its background/card are genome-derived
+and can land anywhere — a heuristic improvement, not a provable-for-every-
+genome fix.
 
 Five themes exist: AUTO (index 0, derived per-pet from the companion's own
 genome palette in `applyTheme()` — background/card follow `primaryDark`,
@@ -120,10 +136,30 @@ Text size is `1`/`2`/`3` (`display->setTextSize()`), used consistently by
 role, not by what happens to fit:
 
 - **3** — page titles only (`drawCentered(title, 15-18, 3, COLOR_MINT)`).
-- **2** — button/tile labels, primary values (brightness percentage, stat
-  numbers).
-- **1** — secondary/helper text: subtitles under a title, hints, muted
-  captions, small badges.
+- **2** — anything that's *content*: data the user actually reads to
+  understand their pet or make a decision — stat values, stat labels, tile
+  labels, row titles, button labels. This used to be narrower ("primary
+  values" only) until a real bug showed why: a label at size 1 sitting
+  right next to the size-2 value it names doesn't just look small, it
+  reads as broken, because the two things a single row is trying to say
+  together no longer look like they belong to each other. The Status
+  page's own FOOD/JOY/ENERGY/HEALTH rows and the PVP stats sheet's
+  LEVEL/HP/ATTACK/... rows were both exactly this bug.
+- **1** — secondary/helper text only: subtitles under a title, swipe/tap
+  hints, page-count indicators ("1 / 2"), and a tile's *description* line
+  underneath its (size-2) label — "SCAN WIFI+BLE" under "FEED", "REROLLS
+  ELEMENT" under "TYPE SHIFT". That last case isn't the label/value bug
+  above: a tile's label and its description are different roles (title
+  vs. subtitle, the same relationship a page title has with the subtitle
+  under it), not two halves of one data point that need to match.
+
+**The rule, concretely: if two pieces of text are naming and showing the
+same one thing — a label and the value it labels, two buttons that are
+equally-weighted alternatives — they're the same size.** Reserve size 1 for
+text that's genuinely a different, lesser role than whatever's next to it,
+never as a way to fit a label that would otherwise be too wide; if a label
+doesn't fit at size 2, the fix is more width or a shorter label, not a
+smaller label.
 
 Page titles are `COLOR_MINT`; subtitles directly under them are usually
 `COLOR_CYAN` or `COLOR_MUTED`. Neither of those is the fill-contrast problem
@@ -204,4 +240,6 @@ were actually found — by rendering, not by reasoning about hex values.
    `presentOverlayExit()`, not a hard cut.
 5. A picker among visual options (a theme, an icon set, ...) previews each
    option rather than naming it.
+6. A label sits at the same text size as the value it labels (Typography
+   above) — never smaller just because it's the shorter string.
 6. Rendered and eyeballed across all 4 fixed themes via the render harness.

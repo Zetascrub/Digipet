@@ -254,12 +254,20 @@ uint8_t brightnessPercent();
 struct ThemeColors {
   uint16_t background, card, primary, text, muted, warning, danger, cyan, secondary;
 };
+// muted (5th field) was lightened for every fixed theme from its original
+// ship value -- the originals were never actually checked against WCAG
+// contrast math and landed at 3.1-4.4:1 on COLOR_CARD (below the 4.5:1
+// floor for normal-size text) in every one of them, worst in Violet Link.
+// Each new value is the *minimal* lerp toward that theme's own COLOR_TEXT
+// (as little as 3%, at most Violet Link's 30%) that clears 4.5:1 against
+// both COLOR_CARD and COLOR_BACKGROUND, so the hue/character each theme's
+// muted tone had is preserved as closely as the contrast floor allows.
 constexpr ThemeColors kThemes[] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0},  // AUTO -- see comment above.
-    {0x0823, 0x18E8, 0x6718, 0xE73C, 0x8413, 0xFE48, 0xF2CB, 0x269F, 0xA81F},  // Cyber Mint
-    {0x1000, 0x28C2, 0xFD20, 0xFF9C, 0x9B48, 0xFFE0, 0xF260, 0xFBA0, 0xB940},  // Amber Core
-    {0x080F, 0x2019, 0xC35F, 0xF73F, 0x8C18, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},  // Violet Link
-    {0x0000, 0x18C3, 0xC618, 0xFFFF, 0x7BEF, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},  // Mono Signal
+    {0x0823, 0x18E8, 0x6718, 0xE73C, 0x8433, 0xFE48, 0xF2CB, 0x269F, 0xA81F},  // Cyber Mint
+    {0x1000, 0x28C2, 0xFD20, 0xFF9C, 0xABCB, 0xFFE0, 0xF260, 0xFBA0, 0xB940},  // Amber Core
+    {0x080F, 0x2019, 0xC35F, 0xF73F, 0xAD1A, 0xFD86, 0xF1CB, 0x6DFF, 0x91FF},  // Violet Link
+    {0x0000, 0x18C3, 0xC618, 0xFFFF, 0x8410, 0xDEFB, 0xD69A, 0xBDF7, 0x8410},  // Mono Signal
 };
 constexpr int kThemeCount = sizeof(kThemes) / sizeof(kThemes[0]);
 

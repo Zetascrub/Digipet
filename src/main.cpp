@@ -804,7 +804,16 @@ void applyTheme() {
     COLOR_CARD = scaleRgb565(petPalette.primaryDark, 55);
     COLOR_MINT = petPalette.primaryLight;
     COLOR_TEXT = 0xF7BE;
-    COLOR_MUTED = scaleRgb565(petPalette.secondary, 82);
+    // Blended toward COLOR_TEXT rather than just darkened off
+    // petPalette.secondary (the old scaleRgb565(..., 82) here) -- AUTO's
+    // background/card are genome-derived and can land anywhere, so unlike
+    // the 4 fixed themes' own COLOR_MUTED (see kThemes[]' own comment)
+    // there's no single contrast fix that's provably correct for every
+    // possible genome. Leaning on the one fixed, always-bright color this
+    // branch has (COLOR_TEXT) is the best available heuristic improvement
+    // over a flat darken, which had no relationship to either backdrop's
+    // actual brightness at all.
+    COLOR_MUTED = lerpRgb565(petPalette.secondary, COLOR_TEXT, 0.35f);
     COLOR_WARNING = petPalette.accent;
     COLOR_DANGER = 0xF2CB;
     COLOR_CYAN = petPalette.glow;

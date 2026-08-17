@@ -1,5 +1,6 @@
 #include "pet_genome.h"
 
+#include <cstdio>
 #include <esp_system.h>
 
 namespace {
@@ -248,4 +249,24 @@ const char *eggLineageName(uint8_t lineage) {
 const char *elementName(uint8_t element) {
   static const char *names[] = {"FIRE", "WATER", "NATURE", "ELECTRIC", "DARK", "DIGITAL"};
   return names[element % 6];
+}
+
+void petDisplayName(const PetGenome &genome, char *output, size_t outputSize) {
+  static const char *firstWords[] = {"NOVA", "ECHO", "ONYX", "VOLT", "EMBER", "CIPHER",
+      "QUARTZ", "FLUX", "RUST", "IRIS", "ZERO", "GLITCH", "PIXEL", "COBALT", "VESPER",
+      "NEON", "CRYPT", "HALO", "RIFT", "AMBER"};
+  static const char *secondWords[] = {"BYTE", "SPARK", "WISP", "CORE", "DRIFT", "PULSE",
+      "SHARD", "GLOW", "NODE", "FLARE", "LOOP", "VEIL", "FANG", "WING", "RUNE", "TIDE"};
+  // Drawn from the seed bytes that already deterministically drive the rest
+  // of the genome (derivePetGenome()), not any of the visible trait genes
+  // -- so the name doesn't read as secretly just restating the element or
+  // temperament under a different label. Different byte positions within
+  // seed[0]/seed[1] than derivePetGenome() itself leans on most heavily,
+  // for a name that varies independently of the genome's other early
+  // derivations even when two seeds are close.
+  const uint8_t firstIndex = static_cast<uint8_t>(genome.seed[0] >> 8);
+  const uint8_t secondIndex = static_cast<uint8_t>(genome.seed[1] >> 16);
+  snprintf(output, outputSize, "%s-%s",
+           firstWords[firstIndex % (sizeof(firstWords) / sizeof(firstWords[0]))],
+           secondWords[secondIndex % (sizeof(secondWords) / sizeof(secondWords[0]))]);
 }

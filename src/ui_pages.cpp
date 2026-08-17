@@ -117,17 +117,23 @@ void drawStatRow(StatIcon icon, uint8_t value, int16_t y) {
   const uint16_t color = value < 25 ? COLOR_DANGER :
       (value < 50 ? COLOR_WARNING : COLOR_MINT);
   drawStatIcon(icon, 22, y - 17, color);
-  display->setTextSize(1);
+  // Label matches the value's own size 2 now (was 1) -- see
+  // docs/style-guide.md's typography section: a label sitting right next
+  // to the value it names reads as broken/mismatched at any different
+  // size from that value, not just smaller-and-therefore-harder-to-read.
+  // The bar shifts right/narrows accordingly (138-280 instead of
+  // 112-280) to leave room for "ENERGY", the longest label, at the
+  // larger size.
+  display->setTextSize(2);
   display->setTextColor(COLOR_TEXT);
   display->setCursor(59, y - 7);
   display->print(STAT_LABELS[icon]);
-  display->drawRoundRect(112, y - 7, 168, 18, 8, COLOR_MUTED);
+  display->drawRoundRect(138, y - 7, 142, 18, 8, COLOR_MUTED);
   if (value > 0) {
-    const int16_t filled = (162 * value) / 100;
-    display->fillRoundRect(115, y - 4, filled, 12, 6, color);
-    if (filled > 6) display->fillCircle(115 + filled - 6, y + 2, 5, lerpRgb565(color, RGB565_WHITE, 0.35f));
+    const int16_t filled = (136 * value) / 100;
+    display->fillRoundRect(141, y - 4, filled, 12, 6, color);
+    if (filled > 6) display->fillCircle(141 + filled - 6, y + 2, 5, lerpRgb565(color, RGB565_WHITE, 0.35f));
   }
-  display->setTextSize(2);
   display->setTextColor(COLOR_TEXT);
   display->setCursor(294, y - 7);
   display->printf("%3u%%", value);
@@ -168,10 +174,19 @@ void drawActionTile(uint8_t action, int16_t x, int16_t y, const char *label,
     drawStatIcon(static_cast<StatIcon>(action), x + 64, y + 18, iconColor);
   }
   // action >= 5 (a reserved-for-later placeholder) gets no icon at all.
-  display->setTextSize(1);
+  // label is size 2 (was 1) -- it's the tile's actual name (FEED, RECON
+  // LOG, ...), the same "title" role drawCentered()'s own size-3 page
+  // titles play, just one step down; value stays size 1 as its
+  // description, the same "subtitle" role a page's own size-1 subtitle
+  // plays. Not a mismatch to fix (see drawBattleStatsView()'s own comment
+  // for that pattern) -- these two lines are deliberately different roles,
+  // and value's longer strings ("SCAN WIFI+BLE") would overflow the
+  // tile's width at size 2.
+  display->setTextSize(2);
   display->setTextColor(locked ? COLOR_MUTED : COLOR_TEXT);
   display->setCursor(x + 16, y + 82);
   display->print(label);
+  display->setTextSize(1);
   display->setTextColor(COLOR_MUTED);
   display->setCursor(x + 16, y + 104);
   display->print(value);
@@ -789,7 +804,15 @@ void drawPageDots(Page active) {
 
 void drawCompanionPage() {
   paintPageBackdrop();
-  drawCentered("DIGIPET // 001", 15, 3, COLOR_MINT);
+  // A generated callsign-style name (petDisplayName(), pet_genome.cpp)
+  // instead of the old static "DIGIPET // 001" -- deterministic from the
+  // genome's own seed, so it stays the same for this companion across
+  // reboots without needing anything new persisted, the same way
+  // eggLineageName()/elementName() below don't need their own storage
+  // either.
+  char name[PET_NAME_LENGTH];
+  petDisplayName(pet.genome, name, sizeof(name));
+  drawCentered(name, 15, 3, COLOR_MINT);
   display->setTextSize(1);
   display->setTextColor(COLOR_CYAN);
   display->setCursor(28, 49);
@@ -968,10 +991,15 @@ void drawSettingsTile(uint8_t item, int16_t x, int16_t y,
   display->fillRoundRect(x, y, 160, 137, 20, COLOR_CARD);
   display->drawRoundRect(x, y, 160, 137, 20, accent);
   drawSettingsIcon(item, x + 80, y + 43, COLOR_MINT);
-  display->setTextSize(1);
+  // Same label-is-size-2/value-is-size-1 "title/subtitle" role split as
+  // drawActionTile() -- see that function's own comment. "BOOT EFFECT",
+  // the longest label here, is 132px at size 2 starting from x+16 in a
+  // 160px-wide tile -- fits with a few px to spare before the edge.
+  display->setTextSize(2);
   display->setTextColor(COLOR_TEXT);
   display->setCursor(x + 16, y + 82);
   display->print(label);
+  display->setTextSize(1);
   display->setTextColor(COLOR_MUTED);
   display->setCursor(x + 16, y + 104);
   display->print(value);
@@ -1157,8 +1185,10 @@ void drawGenomeLabPage() {
     const uint16_t fill = !available ? COLOR_MUTED :
                           (selected ? COLOR_DANGER : COLOR_PURPLE);
     display->fillRoundRect(x, 378, 108, 46, 13, fill);
+    // Size 2 (was 1) -- "CONFIRM", the longest of these, is 84px at size 2
+    // and fits easily inside this 108px-wide button.
     drawCenteredInRect(selected ? "CONFIRM" : labels[i], x, 378, 108, 46,
-                       1, readableTextColor(fill));
+                       2, readableTextColor(fill));
   }
   drawPageDots(PAGE_GENOME_LAB);
 }
@@ -1248,9 +1278,9 @@ void drawBattleButton(int16_t x, int16_t y, int16_t w, int16_t h, int16_t radius
   display->fillRoundRect(x, y, w, h, radius, color);
   const uint16_t labelColor = readableTextColor(color);
   drawBattleMoveIcon(icon, x + w / 2 - 16, y + 6, labelColor);
-  display->setTextSize(1);
+  display->setTextSize(2);
   display->setTextColor(labelColor);
-  drawCenteredInRect(label, x, y + h - 20, w, 18, 1, labelColor);
+  drawCenteredInRect(label, x, y + h - 20, w, 18, 2, labelColor);
 }
 
 // Shared "in battle" layout for both the live Battling/Result states and the
@@ -1351,7 +1381,12 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
     drawPanelGlow(190, 305, 160, 54, 14, COLOR_CYAN);
     display->fillRoundRect(18, 305, 160, 54, 14, COLOR_PURPLE);
     display->fillRoundRect(190, 305, 160, 54, 14, COLOR_CYAN);
-    drawCenteredInRect(genomeCopied ? "COPIED" : "COPY GENOME", 18, 305, 160, 54, 1,
+    // Both buttons at size 2 -- was 1 vs. 2, an inconsistency between two
+    // equally-weighted CTAs on the same row with no reason for one to
+    // read smaller than the other. "COPY GENOME", the longer of the two
+    // labels either button ever shows, is 132px at size 2 and fits inside
+    // this 160px-wide button.
+    drawCenteredInRect(genomeCopied ? "COPIED" : "COPY GENOME", 18, 305, 160, 54, 2,
                        readableTextColor(COLOR_PURPLE));
     drawCenteredInRect("RETURN", 190, 305, 160, 54, 2, readableTextColor(COLOR_CYAN));
   } else {
@@ -1388,11 +1423,16 @@ void drawBattleStatsView() {
   const char *values[] = {"5", hp, atk, def, specialText, elementName(pet.genome.element)};
   constexpr int16_t kFirstRowY = 96;
   constexpr int16_t kRowPitch = 36;
+  // Label and value are the same size 2 -- see docs/style-guide.md's
+  // typography section: this was the exact size-1-label-next-to-size-2-
+  // value mismatch reported as hard to read. "DEFENSE", the longest
+  // label, is 84px at size 2 starting from x=46, comfortably inside the
+  // gap before the value column starts at x=190.
   for (uint8_t i = 0; i < 6; ++i) {
     const int16_t y = kFirstRowY + i * kRowPitch;
-    display->setTextSize(1);
+    display->setTextSize(2);
     display->setTextColor(COLOR_MUTED);
-    display->setCursor(46, y);
+    display->setCursor(46, y - 7);
     display->print(labels[i]);
     drawCenteredInRect(values[i], 190, y - 7, 136, 22, 2, COLOR_TEXT);
   }
@@ -1438,10 +1478,13 @@ void drawBattleActionTile(BattleGridTile tile, int16_t x, int16_t y, const char 
     case GRID_RIVALS: drawRivalsIcon(x + 80, y + 43, COLOR_MINT); break;
     case GRID_FRIENDS: drawFriendsIcon(x + 80, y + 43, COLOR_MINT); break;
   }
-  display->setTextSize(1);
+  // Same label-is-size-2/value-is-size-1 "title/subtitle" role split as
+  // drawActionTile() -- see that function's own comment.
+  display->setTextSize(2);
   display->setTextColor(COLOR_TEXT);
   display->setCursor(x + 16, y + 82);
   display->print(label);
+  display->setTextSize(1);
   display->setTextColor(COLOR_MUTED);
   display->setCursor(x + 16, y + 104);
   display->print(value);
@@ -1616,12 +1659,17 @@ void drawItemsPage() {
     display->drawRoundRect(20, y, 328, 46, 14, available ? accent : COLOR_MUTED);
     drawItemIcon(i, 46, y + 23, available ? accent : COLOR_MUTED);
 
-    display->setTextSize(1);
+    // Name is size 2 (was 1) -- the row's actual title, same "title" role
+    // drawActionTile()'s own label plays; description stays size 1 as its
+    // subtitle. "SPECIAL BOOST", the longest name, is 156px at size 2 and
+    // fits in the ~194px gap before the count column at x=268.
+    display->setTextSize(2);
     display->setTextColor(available ? COLOR_TEXT : COLOR_MUTED);
-    display->setCursor(74, y + 12);
+    display->setCursor(74, y + 8);
     display->print(names[i]);
+    display->setTextSize(1);
     display->setTextColor(COLOR_MUTED);
-    display->setCursor(74, y + 28);
+    display->setCursor(74, y + 32);
     if (i == ITEM_TYPE_SHIFT) {
       display->print("REROLLS ELEMENT");
     } else {
