@@ -107,6 +107,21 @@ public:
     void end();
     void update();
 
+    // A generic passive BLE advertisement sweep for the FEED signal-scan
+    // feature (main.cpp's performFeedScan()) -- unlike beginFind(), not
+    // looking for VPet opponents specifically, just enumerating whatever's
+    // nearby. Returns one FNV-1a hash of each discovered device's address,
+    // never the raw address itself -- the caller only ever needs a stable
+    // "have I seen this one before?" key, and hashing it here keeps every
+    // BLE type out of main.cpp entirely, same as everywhere else in this
+    // class's public surface. Same blocking shape as beginFind()'s own
+    // scan (this device has nothing else to do meanwhile anyway), and the
+    // same setActiveScan(true)-during-battle-discovery radio is instead
+    // left passive here -- a signal-scan reads advertisements, it doesn't
+    // need to provoke scan-response replies. Returns empty if a battle is
+    // already in progress.
+    std::vector<uint32_t> scanNearbyBle(uint32_t durationMs);
+
     FamiliarBattleState state() const { return state_; }
     const String& status() const { return status_; }
     const FamiliarBattleOpponent& opponent() const { return opponent_; }

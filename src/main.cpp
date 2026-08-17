@@ -158,6 +158,15 @@ constexpr uint32_t BATTLE_STATS_MAGIC = 0x42535401;  // "BST" + schema 1
 BattleStats battleStats{};
 bool showingRivals = false;
 
+// Same reasoning as BATTLE_STATS_MAGIC/battleStats just above.
+constexpr uint32_t RECON_LOG_MAGIC = 0x52434C31;  // "RCL" + schema 1
+
+ReconLog reconLog{};
+bool showingReconLog = false;
+
+// See this flag's own comment in ui_pages.h.
+bool statusShowingActions = false;
+
 // Sets `message` and arms drawToastOverlay() to show it as a slide-down
 // banner on whichever of the five main pages is on screen next -- see the
 // comment on `message`'s declaration above.
@@ -192,6 +201,8 @@ Page genomeProfileReturnPage = PAGE_COMPANION;
 void presentCoherentPageFrame(Page page);
 void transitionSettingsView(SettingsView target, bool forward);
 void transitionSettingsGrid(uint8_t target);
+void transitionStatusView(bool showActions);
+void performAction(int action);
 void presentOverlayEntrance(Page fromPage, void (*drawOverlay)());
 void presentOverlayExit(void (*drawOverlay)(), Page toPage);
 Page currentPage = PAGE_COMPANION;
@@ -809,6 +820,54 @@ void loadBattleStats() {
     battleStats = BattleStats{};
     battleStats.magic = BATTLE_STATS_MAGIC;
   }
+}
+
+void saveReconLog() {
+  preferences.putBytes("reconLog", &reconLog, sizeof(reconLog));
+}
+
+void loadReconLog() {
+  if (preferences.getBytesLength("reconLog") == sizeof(reconLog)) {
+    preferences.getBytes("reconLog", &reconLog, sizeof(reconLog));
+  }
+  if (reconLog.magic != RECON_LOG_MAGIC) {
+    reconLog = ReconLog{};
+    reconLog.magic = RECON_LOG_MAGIC;
+  }
+}
+
+// Records one scan hit, evicting the oldest entry (by firstSeenAge) once
+// kMaxReconEntries is full -- the same "keep what's still relevant" shape
+// findOrAddRival() uses below, just keyed by recency instead of battle
+// count since a signal has no equivalent tally. Returns true the first
+// time `idHash` is ever seen (a "new device" bonus for performFeedScan()),
+// false on every scan after that.
+bool reconLogRecord(uint32_t idHash, uint8_t kind, const char *label) {
+  for (uint8_t i = 0; i < reconLog.entryCount; ++i) {
+    if (reconLog.entries[i].idHash == idHash) return false;
+  }
+  ReconEntry entry{};
+  entry.idHash = idHash;
+  entry.kind = kind;
+  entry.firstSeenAge = pet.ageMinutes;
+  if (label) {
+    strncpy(entry.label, label, sizeof(entry.label) - 1);
+  }
+  if (reconLog.entryCount < kMaxReconEntries) {
+    reconLog.entries[reconLog.entryCount++] = entry;
+  } else {
+    uint8_t oldestIndex = 0;
+    uint32_t oldestAge = 0xFFFFFFFF;
+    for (uint8_t i = 0; i < kMaxReconEntries; ++i) {
+      if (reconLog.entries[i].firstSeenAge < oldestAge) {
+        oldestAge = reconLog.entries[i].firstSeenAge;
+        oldestIndex = i;
+      }
+    }
+    reconLog.entries[oldestIndex] = entry;
+  }
+  ++reconLog.totalUniqueSeen;
+  return true;
 }
 
 // Finds `playerId`'s rival slot, adding a new one if this is a first-time
@@ -1899,6 +1958,22 @@ void transitionSettingsGrid(uint8_t target) {
                       /*vertical=*/true, /*enterFromEnd=*/upward, 18);
 }
 
+// Same "peer sub-views, swipe between them" shape as transitionSettingsGrid()
+// just above -- see statusShowingActions' own comment in ui_pages.h.
+void transitionStatusView(bool showActions) {
+  if (showActions == statusShowingActions) return;
+  if (!transitionsReady) {
+    statusShowingActions = showActions;
+    drawStatusPage();
+    return;
+  }
+  renderPageToCanvas(PAGE_STATUS, pageCanvasA);
+  statusShowingActions = showActions;
+  renderPageToCanvas(PAGE_STATUS, pageCanvasB);
+  playSlideTransition(pageCanvasA.getFramebuffer(), pageCanvasB.getFramebuffer(),
+                      /*vertical=*/true, /*enterFromEnd=*/showActions, 18);
+}
+
 void presentBattlePage() {
   if (transitionsReady) {
     renderPageToCanvas(PAGE_BATTLE, pageCanvasA);
@@ -1974,6 +2049,23 @@ void changeSetting(int16_t x, int16_t y) {
         [](const char *status, int progress) { presentUpdatePage(status, progress); });
     presentUpdatePage(otaResultMessage(otaResult), -1);
     lastInteraction = millis();
+  }
+}
+
+// Same tile-grid hit-test shape as changeSetting() just above, applied to
+// the Status page's action grid (see statusShowingActions' own comment in
+// ui_pages.h) instead of Settings' home grid -- one page's worth of tiles
+// here, not two, so no settingsGridPage-style page offset is needed.
+void handleStatusGridTap(int16_t x, int16_t y) {
+  if (y < 78 || y >= 364) return;
+  const uint8_t column = x >= LCD_WIDTH / 2;
+  const uint8_t row = y >= 227;
+  const uint8_t tile = row * 2 + column;
+  if (tile == 3) {
+    showingReconLog = true;
+    presentOverlayEntrance(PAGE_STATUS, drawReconLogPage);
+  } else {
+    performAction(tile);
   }
 }
 
@@ -2140,11 +2232,111 @@ void checkEvolution() {
   }
 }
 
+// FNV-1a, used only for hashing a WiFi BSSID into a ReconEntry idHash --
+// FamiliarBattleService::scanNearbyBle() needs the exact same constants for
+// its own BLE-address hashing but isn't shared code with this: keeping BLE
+// fully encapsulated inside that class (see its own comment) is worth a
+// second four-line copy of a hash loop this small.
+uint32_t fnv1aHash(const uint8_t *data, size_t length) {
+  uint32_t hash = 2166136261u;
+  for (size_t i = 0; i < length; ++i) {
+    hash ^= data[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+void drawScanningPage(uint8_t phase) {
+  paintPageBackdrop();
+  drawCentered("SIGNAL SCAN", 40, 3, COLOR_MINT);
+  drawCentered("PASSIVE WIFI + BLE SWEEP", 76, 1, COLOR_CYAN);
+  drawPanelGlow(24, 120, 320, 190, 26, COLOR_PURPLE);
+  display->fillRoundRect(24, 120, 320, 190, 26, COLOR_CARD);
+  display->drawRoundRect(32, 128, 304, 174, 20, COLOR_PURPLE);
+  drawCentered(phase == 0 ? "WIFI SWEEP" : "BLE SWEEP", 175, 2, COLOR_TEXT);
+  drawCentered(phase == 0 ? "READING BEACON FRAMES" : "READING ADVERTISEMENTS",
+               208, 1, COLOR_MUTED);
+  for (uint8_t i = 0; i < 2; ++i) {
+    display->fillCircle(160 + i * 48, 260, 10, i <= phase ? COLOR_MINT : COLOR_MUTED);
+  }
+  drawCentered("HOLD STILL...", 340, 1, COLOR_WARNING);
+}
+
+// Blits drawScanningPage() straight to the panel (through the transition
+// canvas pipeline where available, same as presentUpdatePage()) -- called
+// once per phase, not on a redraw cadence, since both scans below are
+// blocking calls with nothing else running meanwhile to animate against.
+void presentScanningPage(uint8_t phase) {
+  if (transitionsReady) {
+    Arduino_GFX *previousDisplay = display;
+    display = &pageCanvasA;
+    drawScanningPage(phase);
+    display = previousDisplay;
+    panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+  } else {
+    drawScanningPage(phase);
+  }
+}
+
+struct FeedScanResult {
+  uint8_t wifiCount = 0;
+  uint8_t bleCount = 0;
+  uint8_t newCount = 0;
+};
+
+// FEED's mechanic: a passive ~4s WiFi beacon scan followed by a passive
+// ~4s BLE advertisement scan -- sequential, never simultaneous, because the
+// ESP32-S3 has exactly one 2.4GHz radio shared between Wi-Fi and BLE (see
+// FamiliarBattleService::beginRadio()'s own comment, which this mirrors).
+// Purely passive: WiFi.scanNetworks() only reads public beacon frames and
+// scanNearbyBle() only reads public advertisements -- this never
+// associates, pairs, connects, or transmits anything at any discovered
+// device, the same "just listening" scan any phone already does to list
+// nearby networks.
+FeedScanResult performFeedScan() {
+  FeedScanResult result;
+  presentScanningPage(0);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false, false);
+  const int16_t found = WiFi.scanNetworks(false, false, false, 300);
+  if (found > 0) {
+    result.wifiCount = static_cast<uint8_t>(min<int16_t>(found, 255));
+    for (int16_t i = 0; i < found; ++i) {
+      const uint8_t *bssid = WiFi.BSSID(i);
+      if (bssid != nullptr &&
+          reconLogRecord(fnv1aHash(bssid, 6), 0, WiFi.SSID(i).c_str())) {
+        ++result.newCount;
+      }
+    }
+  }
+  WiFi.scanDelete();
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  delay(150);
+
+  presentScanningPage(1);
+  const std::vector<uint32_t> bleHashes = battle.scanNearbyBle(4000);
+  result.bleCount = static_cast<uint8_t>(min<size_t>(bleHashes.size(), 255));
+  for (uint32_t hash : bleHashes) {
+    if (reconLogRecord(hash, 1, nullptr)) ++result.newCount;
+  }
+
+  ++reconLog.totalScans;
+  saveReconLog();
+  return result;
+}
+
 void performAction(int action) {
   if (action == 0) {
-    pet.food = addClamped(pet.food, 18);
+    const FeedScanResult scan = performFeedScan();
+    const uint16_t totalSeen = static_cast<uint16_t>(scan.wifiCount) + scan.bleCount;
+    const uint8_t deviceGain = static_cast<uint8_t>(min<uint16_t>(totalSeen, 20));
+    const uint8_t foodGain = static_cast<uint8_t>(6 + deviceGain + scan.newCount * 3);
+    pet.food = addClamped(pet.food, foodGain);
+    pet.joy = addClamped(pet.joy, static_cast<uint8_t>(scan.newCount * 2));
     pet.energy = addClamped(pet.energy, 2);
-    showToast("Crunch! Data restored");
+    showToastf("SCAN: %u seen, %u new (+%u food)", totalSeen, scan.newCount, foodGain);
   } else if (action == 1) {
     if (pet.energy < 8) {
       showToast("Too tired to play");
@@ -2416,6 +2608,7 @@ void setup() {
   loadPet();
   loadCopiedGenome();
   loadBattleStats();
+  loadReconLog();
   applyTheme();
   char genomeSelfTest[PET_GENOME_CODE_LENGTH + 1]{};
   PetGenome decodedSelfTest{};
@@ -2548,7 +2741,7 @@ void loop() {
     presentCoherentPageFrame(PAGE_GENOME_LAB);
   } else if (!sleeping && toastVisible && !showingEvolutionDebug &&
              !showingGenomeProfile && !showingPlayerId && !showingUpdate &&
-             !showingBattleResults && !showingRivals &&
+             !showingBattleResults && !showingRivals && !showingReconLog &&
              (currentPage == PAGE_STATUS || currentPage == PAGE_BATTLE ||
               currentPage == PAGE_SETTINGS) &&
              now - lastAnimation >= 30) {
@@ -2588,17 +2781,17 @@ void loop() {
       touchStartX = touchLastX = x;
       touchStartY = touchLastY = y;
 
-      // Instant press feedback for the two highest-traffic controls --
-      // FEED/PLAY/TRAIN and the battle move grid. The gate on each branch
-      // matches performAction()'s/handleBattleTap()'s own hit-test bounds
-      // exactly (wider than the drawn button in the FEED/PLAY/TRAIN case),
-      // so a highlight always appears whenever that tap will actually fire
-      // the action on release, even where the two don't quite line up
-      // pixel-for-pixel with the button art itself.
-      if (currentPage == PAGE_STATUS && y >= 360 && y < 448) {
-        constexpr int16_t kButtonX[] = {14, 132, 250};
-        const uint8_t index = x < 124 ? 0 : x < 244 ? 1 : 2;
-        flashPressedHighlight(kButtonX[index], 375, 104, 54, 14);
+      // Instant press feedback for the highest-traffic controls -- the
+      // Status action grid and the battle move grid. The gate on each
+      // branch matches handleStatusGridTap()'s/handleBattleTap()'s own
+      // hit-test bounds exactly, so a highlight always appears whenever
+      // that tap will actually fire the action on release.
+      if (currentPage == PAGE_STATUS && statusShowingActions && y >= 78 && y < 364) {
+        constexpr int16_t kTileX[] = {18, 190};
+        constexpr int16_t kTileY[] = {78, 227};
+        const uint8_t col = x < LCD_WIDTH / 2 ? 0 : 1;
+        const uint8_t row = y < 227 ? 0 : 1;
+        flashPressedHighlight(kTileX[col], kTileY[row], 160, 137, 20);
       } else if (currentPage == PAGE_BATTLE &&
                  battle.state() == FamiliarBattleState::Battling &&
                  !battle.myMoveSubmitted() && y >= 276 && y <= 382) {
@@ -2669,6 +2862,12 @@ void loop() {
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
+      if (showingReconLog) {
+        showingReconLog = false;
+        presentOverlayExit(drawReconLogPage, PAGE_STATUS);
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       if (showingGenomeProfile) {
         if (touchLastY >= 338 && touchLastY < 393) {
           if (touchLastX < LCD_WIDTH / 2) exportActiveGenome();
@@ -2695,6 +2894,17 @@ void loop() {
           abs(deltaY) > abs(deltaX)) {
         playTone(deltaY < 0 ? 988 : 784, 30, 30);
         transitionSettingsGrid(deltaY < 0 ? 1 : 0);
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
+      if (currentPage == PAGE_STATUS && abs(deltaY) > 55 && abs(deltaY) > abs(deltaX)) {
+        if (deltaY < 0 && !statusShowingActions) {
+          playTone(988, 30, 30);
+          transitionStatusView(true);
+        } else if (deltaY > 0 && statusShowingActions) {
+          playTone(784, 30, 30);
+          transitionStatusView(false);
+        }
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
@@ -2736,10 +2946,8 @@ void loop() {
         genomeProfileReturnPage = PAGE_COMPANION;
         showingGenomeProfile = true;
         presentOverlayEntrance(PAGE_COMPANION, drawGenomeProfilePage);
-      } else if (currentPage == PAGE_STATUS && touchLastY >= 360 && touchLastY < 448) {
-        if (touchLastX < 124) performAction(0);
-        else if (touchLastX < 244) performAction(1);
-        else performAction(2);
+      } else if (currentPage == PAGE_STATUS && statusShowingActions) {
+        handleStatusGridTap(touchLastX, touchLastY);
       } else if (currentPage == PAGE_SETTINGS) {
         changeSetting(touchLastX, touchLastY);
       } else if (currentPage == PAGE_GENOME_LAB && touchLastY >= 374) {

@@ -125,13 +125,42 @@ void drawStatRow(StatIcon icon, uint8_t value, int16_t y) {
 }
 
 
-void drawButton(const char *label, int16_t x) {
-  display->fillRoundRect(x, 375, 104, 54, 14, COLOR_CARD);
-  display->drawRoundRect(x, 375, 104, 54, 14, COLOR_MINT);
-  display->setTextSize(2);
+// A simple radar sweep -- three concentric rings, a center dot, and one
+// sweep line -- for the RECON LOG action tile. Not added to STAT_ICONS
+// since it isn't a pet stat glyph; drawn with plain primitives the same
+// way drawSettingsIcon()'s tile icons are, rather than as a hand-encoded
+// 16x16 bitmap like STAT_ICONS' glyphs are.
+void drawRadarIcon(int16_t cx, int16_t cy, uint16_t color) {
+  display->drawCircle(cx, cy, 9, color);
+  display->drawCircle(cx, cy, 17, color);
+  display->drawCircle(cx, cy, 25, color);
+  display->fillCircle(cx, cy, 3, color);
+  display->drawLine(cx, cy, cx + 21, cy - 15, color);
+}
+
+// The Status page's action grid tile -- see this function's own prototype
+// comment in ui_pages.h for the icon-reuse rationale. Same chrome as
+// drawSettingsTile() (card + glow + accent outline, alternating
+// COLOR_CYAN/COLOR_PURPLE) so the two grids -- Settings' and this one --
+// read as the same kind of control.
+void drawActionTile(uint8_t action, int16_t x, int16_t y, const char *label,
+                    const char *value) {
+  const uint16_t accent = action & 1 ? COLOR_PURPLE : COLOR_CYAN;
+  drawPanelGlow(x, y, 160, 137, 20, accent);
+  display->fillRoundRect(x, y, 160, 137, 20, COLOR_CARD);
+  display->drawRoundRect(x, y, 160, 137, 20, accent);
+  if (action == 3) {
+    drawRadarIcon(x + 80, y + 43, COLOR_MINT);
+  } else {
+    drawStatIcon(static_cast<StatIcon>(action), x + 64, y + 18, COLOR_MINT);
+  }
+  display->setTextSize(1);
   display->setTextColor(COLOR_TEXT);
-  display->setCursor(x + (52 - strlen(label) * 6), 393);
+  display->setCursor(x + 16, y + 82);
   display->print(label);
+  display->setTextColor(COLOR_MUTED);
+  display->setCursor(x + 16, y + 104);
+  display->print(value);
 }
 
 // Instant touch-down feedback for a button/tile, drawn as a bright double
@@ -727,8 +756,14 @@ void drawCreature(bool frame, bool asleep) {
 
 
 void drawPageDots(Page active) {
-  const int16_t y = active == PAGE_STATUS ? 355 :
-                    (active >= PAGE_SETTINGS ? 437 : 425);
+  // PAGE_STATUS used to sit at y=355, tuned for the old single-view Status
+  // page's FEED/PLAY/TRAIN row starting at y=375 -- now that those moved
+  // into the action grid (drawStatusActionsView(), which runs to y=364)
+  // and the summary view's own hints sit at y=374/399 (drawStatusSummaryView(),
+  // matching the Companion page's identical hint-line convention), the
+  // default 425 clears both sub-views cleanly and there's no more reason
+  // for Status to be the odd one out.
+  const int16_t y = active >= PAGE_SETTINGS ? 437 : 425;
   const Page pages[] = {PAGE_COMPANION, PAGE_STATUS, PAGE_BATTLE,
                         PAGE_SETTINGS, PAGE_GENOME_LAB};
   for (uint8_t i = 0; i < 5; ++i) {
@@ -764,8 +799,13 @@ void drawCompanionPage() {
 }
 
 
-void drawStatusPage() {
-  paintPageBackdrop();
+// The stats-summary sub-view (statusShowingActions == false) -- identity,
+// the 4 stat bars, and hardware diagnostics. This is everything the old
+// single-view Status page showed except its FEED/PLAY/TRAIN row, which
+// moved into the action grid below (see drawStatusActionsView()) once
+// FEED stopped being an instant tap and started being a several-second
+// scan (performFeedScan(), main.cpp) worth a swipe away from the numbers.
+void drawStatusSummaryView() {
   drawCentered("COMPANION STATUS", 18, 3, COLOR_MINT);
   char identity[40];
   if (pet.stage == 0) {
@@ -803,9 +843,33 @@ void drawStatusPage() {
                   (unsigned long)pet.ageMinutes, (unsigned long)pet.actions,
                   pet.training, i2cDeviceCount);
 
-  drawButton("FEED", 14);
-  drawButton("PLAY", 132);
-  drawButton("TRAIN", 250);
+  drawCentered("SWIPE UP FOR ACTIONS", 374, 1, COLOR_MUTED);
+  drawCentered("FEED // PLAY // TRAIN // RECON", 399, 1, COLOR_CYAN);
+}
+
+// The action grid sub-view (statusShowingActions == true) -- same 2x2
+// tile layout Settings' own home grid uses (drawSettingsPage()), reusing
+// its exact tile geometry so the two grids feel like the same control.
+// Unlike Settings' grid this is a single page (4 items, no paging needed).
+void drawStatusActionsView() {
+  drawCentered("COMPANION ACTIONS", 18, 3, COLOR_MINT);
+  drawCentered("SELECT AN ACTION // SWIPE DOWN", 51, 1, COLOR_CYAN);
+
+  drawActionTile(0, 18, 78, "FEED", "SCAN WIFI+BLE");
+  drawActionTile(1, 190, 78, "PLAY", "BOOST JOY");
+  drawActionTile(2, 18, 227, "TRAIN", "BOOST STATS");
+  char reconValue[16];
+  snprintf(reconValue, sizeof(reconValue), "%u SIGNALS", reconLog.entryCount);
+  drawActionTile(3, 190, 227, "RECON LOG", reconValue);
+}
+
+void drawStatusPage() {
+  paintPageBackdrop();
+  if (statusShowingActions) {
+    drawStatusActionsView();
+  } else {
+    drawStatusSummaryView();
+  }
   drawPageDots(PAGE_STATUS);
 }
 
@@ -1298,6 +1362,43 @@ void drawRivalsPage() {
       display->setTextColor(rival.wins >= rival.losses ? COLOR_MINT : COLOR_DANGER);
       display->setCursor(216, y);
       display->printf("%uW-%uL", rival.wins, rival.losses);
+    }
+  }
+
+  drawCentered("TAP TO RETURN", 396, 2, COLOR_CYAN);
+}
+
+// A full-screen overlay, opened from the Status page's action grid's
+// RECON LOG tile -- see this function's own prototype comment in
+// ui_pages.h. Same layout as drawRivalsPage() just above (empty state,
+// two-column rows, "TAP TO RETURN") since it's the same kind of screen: a
+// small persistent discovery log, not a live view of anything.
+void drawReconLogPage() {
+  paintPageBackdrop();
+  drawCentered("RECON LOG", 18, 3, COLOR_MINT);
+  drawCentered("SIGNALS DISCOVERED", 51, 1, COLOR_CYAN);
+
+  drawPanelGlow(20, 70, 328, 310, 26, COLOR_PURPLE);
+  display->fillRoundRect(20, 70, 328, 310, 26, COLOR_CARD);
+  display->drawRoundRect(27, 77, 314, 296, 21, COLOR_PURPLE);
+
+  if (reconLog.entryCount == 0) {
+    drawCentered("NO SIGNALS YET", 205, 2, COLOR_TEXT);
+    drawCentered("FEED YOUR PET TO SCAN", 234, 1, COLOR_MUTED);
+  } else {
+    constexpr int16_t kFirstRowY = 92;
+    constexpr int16_t kRowPitch = 35;
+    for (uint8_t i = 0; i < reconLog.entryCount; ++i) {
+      const ReconEntry &entry = reconLog.entries[i];
+      const int16_t y = kFirstRowY + i * kRowPitch;
+      display->setTextSize(2);
+      display->setTextColor(COLOR_TEXT);
+      display->setCursor(46, y);
+      display->print(entry.kind == 0 && entry.label[0] ? entry.label
+                     : entry.kind == 0 ? "HIDDEN AP" : "BLE DEVICE");
+      display->setTextColor(entry.kind == 0 ? COLOR_CYAN : COLOR_PURPLE);
+      display->setCursor(272, y);
+      display->print(entry.kind == 0 ? "WIFI" : "BLE");
     }
   }
 

@@ -55,6 +55,8 @@ uint8_t settingsGridPage = 0;
 SettingsView settingsView = SETTINGS_HOME;
 
 BattleStats battleStats{};
+ReconLog reconLog{};
+bool statusShowingActions = false;
 
 bool hasCopiedGenome = false;
 bool newEggConfirmation = false;
@@ -107,12 +109,12 @@ bool writePpm(Arduino_Canvas &canvas, const char *path) {
 namespace {
 
 const char *kPageNames =
-    "companion|status|egg|settings|settings2|"
+    "companion|status|status-actions|egg|settings|settings2|"
     "settings-brightness|settings-idle|settings-volume|settings-wake|"
     "settings-theme|settings-boot|genomelab|"
     "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
     "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
-    "[stage] arg becomes the results page)";
+    "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]";
 
 void seedTestSettings() {
   settings = DeviceSettings{};
@@ -205,6 +207,11 @@ int main(int argc, char **argv) {
     drawCompanionPage();
   } else if (strcmp(page, "status") == 0) {
     seedTestPet(stage);
+    statusShowingActions = false;
+    drawStatusPage();
+  } else if (strcmp(page, "status-actions") == 0) {
+    seedTestPet(stage);
+    statusShowingActions = true;
     drawStatusPage();
   } else if (strcmp(page, "egg") == 0) {
     seedTestPet(0);
@@ -317,6 +324,25 @@ int main(int argc, char **argv) {
       battleStats.rivals[i] = {ids[i], wins[i], losses[i]};
     }
     drawRivalsPage();
+  } else if (strcmp(page, "recon-empty") == 0) {
+    reconLog = ReconLog{};
+    drawReconLogPage();
+  } else if (strcmp(page, "recon") == 0) {
+    reconLog = ReconLog{};
+    const char *labels[] = {"HomeNet_5G", "", "Coffee_Free_WiFi", "",
+                            "xfinitywifi", "", "PixelBuds_Pro", ""};
+    const uint8_t kinds[] = {0, 1, 0, 1, 0, 1, 0, 1};
+    const int count = argc > 3 ? atoi(argv[3]) : kMaxReconEntries;
+    reconLog.entryCount = static_cast<uint8_t>(
+        std::min(count, static_cast<int>(kMaxReconEntries)));
+    for (uint8_t i = 0; i < reconLog.entryCount; ++i) {
+      ReconEntry &entry = reconLog.entries[i];
+      entry.idHash = 0x1000u + i;
+      entry.kind = kinds[i];
+      entry.firstSeenAge = i * 40;
+      strncpy(entry.label, labels[i], sizeof(entry.label) - 1);
+    }
+    drawReconLogPage();
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;

@@ -333,6 +333,37 @@ bool FamiliarBattleService::beginFind(
     return true;
 }
 
+std::vector<uint32_t> FamiliarBattleService::scanNearbyBle(uint32_t durationMs) {
+    std::vector<uint32_t> hashes;
+    if (state_ != FamiliarBattleState::Idle) return hashes;
+
+    beginRadio();
+    NimBLEScan* scanner = NimBLEDevice::getScan();
+    if (scanner != nullptr) {
+        scanner->clearResults();
+        scanner->setActiveScan(false);  // passive -- never transmits a scan request
+        scanner->setInterval(100);
+        scanner->setWindow(80);
+        NimBLEScanResults results = scanner->getResults(durationMs, false);
+        const int count = results.getCount();
+        hashes.reserve(count);
+        for (int i = 0; i < count; ++i) {
+            const NimBLEAdvertisedDevice* device = results.getDevice(i);
+            if (device == nullptr) continue;
+            const std::string address = device->getAddress().toString();
+            uint32_t hash = 2166136261u;  // FNV-1a, same constants as main.cpp's own
+            for (char c : address) {      // WiFi-BSSID hash -- see that comment for why
+                hash ^= static_cast<uint8_t>(c);  // this isn't shared code.
+                hash *= 16777619u;
+            }
+            hashes.push_back(hash);
+        }
+        scanner->clearResults();
+    }
+    teardownRadio();
+    return hashes;
+}
+
 bool FamiliarBattleService::connectTo(size_t resultIndex) {
     if (resultIndex >= scanResults_.size()) return false;
     const FamiliarBattleOpponent target = scanResults_[resultIndex];

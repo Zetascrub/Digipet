@@ -58,6 +58,14 @@ enum StatIcon : uint8_t { ICON_FOOD, ICON_JOY, ICON_ENERGY, ICON_HEALTH };
 extern Arduino_GFX *display;
 extern PetState pet;
 
+// Status page has two sub-views, the same "peer sub-views, swipe between
+// them, no back button" shape as Settings' own home-grid paging (see
+// transitionSettingsGrid()) rather than a drill-down: false is the stats
+// summary (identity, stat bars, diagnostics), true is the FEED/PLAY/TRAIN/
+// RECON LOG action grid. drawStatusPage() reads this directly; main.cpp's
+// transitionStatusView() is what actually flips it.
+extern bool statusShowingActions;
+
 extern uint16_t COLOR_BACKGROUND;
 extern uint16_t COLOR_CARD;
 extern uint16_t COLOR_MINT;
@@ -104,6 +112,31 @@ struct BattleStats {
   BattleRival rivals[kMaxBattleRivals]{};
 };
 extern BattleStats battleStats;
+
+// Also a per-device record, same shape of reasoning as BattleStats just
+// above -- persists across egg hatches/blends, magic-guarded definition
+// stays in main.cpp. Populated by FEED's WiFi/BLE signal scan
+// (performFeedScan(), main.cpp); drawReconLogPage() reads it directly.
+constexpr uint8_t kMaxReconEntries = 8;
+
+struct ReconEntry {
+  uint32_t idHash = 0;        // FNV-1a of the BSSID (WiFi) or address string (BLE).
+  uint32_t firstSeenAge = 0;  // pet.ageMinutes at first sighting -- a relative,
+                              // always-valid clock, unlike wall time (no RTC needed).
+  uint8_t kind = 0;           // 0 = WiFi AP, 1 = BLE device.
+  char label[13] = {};        // WiFi: truncated SSID. BLE: empty -- a passive scan
+                              // never connects, so no name is ever exchanged.
+};
+
+struct ReconLog {
+  uint32_t magic = 0;
+  uint32_t totalScans = 0;
+  uint32_t totalUniqueSeen = 0;
+  uint8_t entryCount = 0;
+  uint8_t reserved[3]{};
+  ReconEntry entries[kMaxReconEntries]{};
+};
+extern ReconLog reconLog;
 
 struct DeviceSettings {
   uint32_t magic;
@@ -207,6 +240,14 @@ void drawGlyph16(const uint16_t *rows, int16_t x, int16_t y, uint16_t color);
 void drawStatIcon(StatIcon icon, int16_t x, int16_t y, uint16_t color);
 void drawStatRow(StatIcon icon, uint8_t value, int16_t y);
 void drawButton(const char *label, int16_t x);
+// The Status page's action grid tile, same chrome as drawSettingsTile()
+// (card + glow + accent outline, alternating COLOR_CYAN/COLOR_PURPLE) but
+// its own icon set: 0-2 reuse drawStatIcon's FOOD/JOY/ENERGY glyphs (FEED/
+// PLAY/TRAIN restore exactly those stats), 3 is a new radar glyph for
+// RECON LOG, drawn inline rather than added to STAT_ICONS since it isn't a
+// pet stat.
+void drawActionTile(uint8_t action, int16_t x, int16_t y, const char *label,
+                    const char *value);
 void drawPageDots(Page active);
 
 // --- Companion creature rendering -----------------------------------------------
@@ -257,6 +298,12 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
 // swipeable pages, same as the Player ID/OTA update/evolution debug
 // overlays already are.
 void drawRivalsPage();
+
+// Also a full-screen overlay, opened from the Status page's action grid's
+// RECON LOG tile (see include/ui_pages.h's own note on statusShowingActions
+// and main.cpp's performFeedScan()). Reads reconLog directly, same
+// relationship drawRivalsPage() has with battleStats.
+void drawReconLogPage();
 
 // --- Settings ------------------------------------------------------------------
 
