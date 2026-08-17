@@ -23,15 +23,16 @@ Power it on and a five-second boot sequence (real audio, BIOS-style sync
 log) hands off to your companion. From there:
 
 - Feed, play, and train it through animated Companion and Status pages
-- Battle another Digipet over BLE, with stats, elements, and move
-  matchups negotiated live between the two devices
-- Scan for nearby WiFi and BLE devices to earn food and, occasionally, a
-  "mutation trigger" item that permanently boosts HP, attack, defense, or
-  special
-- Trade a friend code with another device over a live BLE handshake
-- Hatch new eggs by cloning or blending a genome pulled in over BLE or SD
-  card, with a chance to carry stat bonuses into the next generation if
-  the current companion reached its final stage first
+- Battle another Digipet live over BLE on a dedicated PVP page, with
+  stats, elements, and move matchups negotiated between the two devices
+- Scan for nearby WiFi and BLE devices to earn food, and rarer items that
+  permanently boost a stat or shift the pet's type
+- Trade friend codes over a live BLE handshake, and track past opponents
+  on a Rivals page
+- Hatch new eggs by cloning or blending a genome, with a chance to
+  inherit stats from a companion that reached its final stage
+- Inspect a full Genome Profile, export it to SD, or import one to clone
+  or blend into a new egg
 - Read real hardware diagnostics for the IMU, RTC, power controller, and
   audio codec
 - Check for and install signed firmware updates, manually, from Settings
