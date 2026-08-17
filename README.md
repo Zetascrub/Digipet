@@ -1,29 +1,42 @@
 # Digipet
 
-Digipet is an ESP32-S3 virtual pet firmware for the Waveshare ESP32-S3 Touch
-AMOLED 1.8-inch V2 board (CO5300 display and CST820 touch controller).
+```
+┌──────────────────────────────────────────┐
+│  D I G I P E T                           │
+│  companion firmware // ESP32-S3          │
+└──────────────────────────────────────────┘
+```
 
-The project blends Digivice-inspired presentation with a modern AMOLED touch
-interface. It is an original virtual-pet project and does not include Digimon
-artwork or proprietary assets.
+A virtual pet that lives entirely on an ESP32-S3. No app, no account, no
+cloud: just a touchscreen, a companion built from its own procedurally
+generated genome, and firmware written to make it feel like something is
+actually in there.
 
-## Current features
+It targets the Waveshare ESP32-S3 Touch AMOLED 1.8 inch board (V2: CO5300
+display, CST820 touch). The presentation takes cues from Digivice-era
+hardware pets, but every creature, egg, and animation here is generated at
+runtime. No Digimon artwork, no proprietary assets, nothing borrowed.
 
-- Five-second artifact-convergence boot sequence with audio
-- Smooth PSRAM-backed page transitions and full-frame rendering
-- Animated companion, status, battle, and settings pages
-- Touch gestures, idle dimming, display-off, and configurable wake control
-- QMI8658 lift-to-wake support
-- RTC clock with optional SD-card Wi-Fi provisioning and NTP synchronisation
-- ES8311 speaker output with configurable volume
-- Hardware diagnostics for the IMU, RTC, power controller, and audio codec
-- Cross-device BLE battles compatible with the included VPet Battle protocol
-- Persistent battle win/loss record and per-rival history, keyed by opponent playerId
-- Runtime SHA-256 player identity generation
-- Persistent procedural companion genomes and ten 2.5D egg lineages
-- Manual signed OTA update checks from the Settings page
-- Persistent settings and virtual-pet state through ESP32 Preferences/NVS
+## What it does
 
+Power it on and a five-second boot sequence (real audio, BIOS-style sync
+log) hands off to your companion. From there:
+
+- Feed, play, and train it through animated Companion and Status pages
+- Battle another Digipet over BLE, with stats, elements, and move
+  matchups negotiated live between the two devices
+- Scan for nearby WiFi and BLE devices to earn food and, occasionally, a
+  "mutation trigger" item that permanently boosts HP, attack, defense, or
+  special
+- Trade a friend code with another device over a live BLE handshake
+- Hatch new eggs by cloning or blending a genome pulled in over BLE or SD
+  card, with a chance to carry stat bonuses into the next generation if
+  the current companion reached its final stage first
+- Read real hardware diagnostics for the IMU, RTC, power controller, and
+  audio codec
+- Check for and install signed firmware updates, manually, from Settings
+
+Every pet, egg, and battle record persists through ESP32 Preferences/NVS.
 Poop and illness mechanics are intentionally excluded.
 
 ## Hardware
@@ -58,53 +71,56 @@ drivers that are not fully represented by the generic PlatformIO board target.
 ## Optional Wi-Fi and time setup
 
 Copy the example tree under [`sd-card`](sd-card) to the microSD card, rename
-`digipet/wifi.ini.example` to `digipet/wifi.ini`, and replace the placeholders
-locally.
+`digipet/wifi.ini.example` to `digipet/wifi.ini`, and fill in your own
+credentials.
 
-The device reads the file during boot, connects long enough to synchronise its
-clock, then disables Wi-Fi. Failure to mount the card, connect, or sync does not
-prevent normal offline operation.
+The device reads the file during boot, connects just long enough to
+synchronise its clock, then disables Wi-Fi again. If the card is missing,
+the connection fails, or sync doesn't happen, the device carries on offline
+without complaint.
 
 Genome Lab can also export the active pet to `digipet/genome.txt` or import
-that file as a copied genome. A credential-free format example is included at
-`sd-card/digipet/genome.txt.example`. Imported genomes can be cloned exactly or
-blended with the active pet when hatching a new egg.
+that file as a copied genome. A credential-free format example is included
+at `sd-card/digipet/genome.txt.example`. Imported genomes can be cloned
+exactly or blended with the active pet when hatching a new egg.
 
-Never commit a populated `wifi.ini`. The `provisioning/` directory is ignored
-for developers who want a local staging area for private device files.
+Never commit a populated `wifi.ini`. The `provisioning/` directory is
+ignored, for developers who want a local staging area for private device
+files.
 
 ## Cross-device battle package
 
-The live firmware uses `include/familiar_battle_service.h` and
-`src/familiar_battle_service.cpp`. A self-contained handoff package for other
-ESP32 developers is available under [`share/vpet-battle`](share/vpet-battle),
-including integration instructions and a compatible Python BLE simulator.
+The live firmware's BLE battle logic lives in
+`include/familiar_battle_service.h` and `src/familiar_battle_service.cpp`.
+A self-contained handoff package for other ESP32 developers is available
+under [`share/vpet-battle`](share/vpet-battle), with integration
+instructions and a compatible Python BLE simulator included.
 
-Battle rendering is device-specific. The shared service owns discovery,
-handshaking, moves, deterministic turn resolution, stats, outcomes, and the BLE
-wire protocol. Optional body, element, speed, special, and move-matchup rules
-are negotiated per battle; peers that implement only HP, attack, and defence
-continue to use the unchanged core rules.
+Battle rendering is device-specific; the shared service owns everything
+else: discovery, handshaking, moves, deterministic turn resolution, stats,
+and outcomes. Optional body, element, speed, special, and move-matchup
+rules are negotiated per battle, so a peer that only implements HP, attack,
+and defense still battles fine on the unmodified core rules.
 
 ## Testing
 
-`pio run` builds the real firmware; `pio test -e native` runs a separate
-host-native suite covering hardware-independent logic: the genome codec,
-blending, and evolution drift in `pet_genome.cpp` (with a stubbed
+`pio run` builds the real firmware. `pio test -e native` runs a separate
+host-native suite covering everything hardware-independent: the genome
+codec, blending, and evolution drift in `pet_genome.cpp` (with a stubbed
 `esp_random()` for determinism, defined in `test/native/fakes`), the Direct
 Challenge stat formulas, matchup tables, and turn resolution in
 `familiar_battle_rules.cpp`, and the contrast-aware label color picker in
-`color_utils.cpp`. It never touches the ESP32 toolchain or NimBLE/Wi-Fi, so
-it stays fast and needs no board. CI (`.github/workflows/build.yml`) runs
-both on every push and PR.
+`color_utils.cpp`. None of it touches the ESP32 toolchain or NimBLE/Wi-Fi,
+so it stays fast and needs no board. CI (`.github/workflows/build.yml`) runs
+both suites on every push and PR.
 
 `tools/sim/render.sh <page> [output.png] [stage] [theme]` renders any page
 with the real drawing code (`src/ui_pages.cpp`, extracted from `main.cpp`)
 compiled natively, for a visual look at a UI change without flashing a
-board — pass `[theme]` (`cyber-mint`/`amber-core`/`violet-link`/
+board. Pass `[theme]` (`cyber-mint`, `amber-core`, `violet-link`, or
 `mono-signal`) to check it against a specific fixed palette. See
 `tools/sim/README.md` and [`docs/style-guide.md`](docs/style-guide.md) for
-the UI conventions (color/contrast rules especially) a page renderer is
+the UI conventions, color and contrast rules especially, a page renderer is
 expected to follow.
 
 ## Repository layout
@@ -125,10 +141,10 @@ platformio.ini       PlatformIO build configuration
 ## Signed releases
 
 Tagged releases are built and signed by GitHub Actions. See
-[`RELEASES.md`](RELEASES.md) for key custody, release creation, asset formats,
-and the security rules planned for the self-updater.
+[`RELEASES.md`](RELEASES.md) for key custody, release creation, asset
+formats, and the security rules planned for the self-updater.
 
 ## License
 
-Digipet is released under the MIT License. Vendored libraries retain their own
-licence files and copyright notices.
+Digipet is released under the MIT License. Vendored libraries retain their
+own license files and copyright notices.

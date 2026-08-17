@@ -1,4 +1,4 @@
-# VPet Battle Service — Integration Guide
+# VPet Battle Service: Integration Guide
 
 This folder contains a reusable ESP32/Arduino BLE battle service. It deliberately contains no display, touch, keyboard, sound, sprite, or pet-storage code. Each device can provide its own interface while using the same battle rules and wire protocol.
 
@@ -278,7 +278,7 @@ Protocol version: 1
 
 The challenger writes to the host. The host sends notifications to the challenger. Multi-byte integers use network byte order (big-endian).
 
-### HELLO — message `0x01`
+### HELLO: message `0x01`
 
 Exactly 13 bytes:
 
@@ -294,7 +294,7 @@ Offset  Size  Value
 
 Only the challenger creates the shared seed. The host adopts it and returns a HELLO response. A received HP value of zero is interpreted as derived maximum HP during the handshake.
 
-### MOVE — message `0x02`
+### MOVE: message `0x02`
 
 Exactly 2 bytes:
 
@@ -304,7 +304,7 @@ Offset  Size  Value
 1       1     Move: Attack=0, Defend=1, Special=2, Flee=3
 ```
 
-### CAPABILITIES — optional message `0x03`
+### CAPABILITIES: optional message `0x03`
 
 Enhanced implementations send this separate message immediately after a
 successful HELLO send. Core implementations need not send it and must ignore
@@ -338,7 +338,7 @@ Unknown flag bits are ignored. An invalid body or element clears only that
 field's capability. The active capability mask is the bitwise intersection of
 both peers' masks. Arrival order must not affect the core handshake.
 
-### GENOME CHUNK — optional message `0x04`
+### GENOME CHUNK: optional message `0x04`
 
 A 60-character application-owned genome code is divided into five fixed
 14-byte packets. The battle service transports the string without trusting or

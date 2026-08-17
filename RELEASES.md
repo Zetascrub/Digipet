@@ -13,10 +13,10 @@ the manifest was authorised by the Digipet release key.
 
 Every `v*` release contains:
 
-- `digipet-firmware.bin` — application image for OTA
-- `digipet-factory.bin` — combined image for wired recovery/first install
-- `digipet-manifest.json` — canonical update metadata and image hashes
-- `digipet-manifest.sig` — ECDSA P-256/SHA-256 signature of the manifest
+- `digipet-firmware.bin`: application image for OTA
+- `digipet-factory.bin`: combined image for wired recovery/first install
+- `digipet-manifest.json`: canonical update metadata and image hashes
+- `digipet-manifest.sig`: ECDSA P-256/SHA-256 signature of the manifest
 
 The public verification key is committed at
 `release/firmware-signing-public.pem`. The private key must never enter the
