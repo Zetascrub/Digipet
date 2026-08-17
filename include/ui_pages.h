@@ -85,6 +85,19 @@ extern bool statusShowingActions;
 // transitionStatusActionsGrid() is what changes this.
 extern uint8_t statusActionsPage;
 
+// Same "peer sub-views, swipe between them" shape as statusShowingActions
+// just above, applied to the Battle page's Idle state: false is the
+// battle-stats sheet (LV/HP/ATK/DEF/SPECIAL/TYPE, all at once, no
+// cramped one-line header), true is the HOST/FIND/RIVALS/FRIENDS action
+// grid. Only meaningful while battle.state() == Idle -- every other
+// battle state (Scanning/Hosting/Connecting/Battling/Result/Exchanged)
+// draws its own dedicated full-screen content regardless of this flag.
+// drawBattleStatsView()/drawBattleActionsView() don't read this
+// themselves (main.cpp's drawBattlePage() is the dispatcher, same
+// division of responsibility drawBattlingLayout() already has); main.cpp's
+// transitionBattleView() is what flips it.
+extern bool battleShowingActions;
+
 extern uint16_t COLOR_BACKGROUND;
 extern uint16_t COLOR_CARD;
 extern uint16_t COLOR_MINT;
@@ -361,9 +374,23 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
                         bool opponentGenomeAvailable, bool genomeCopied,
                         const PetGenome *opponentGenome);
 
-// A full-screen overlay (tapped open from the Battle Idle screen's "RECORD"
-// line, dismissed by tapping anywhere -- see main.cpp), not one of the 5
-// swipeable pages, same as the Player ID/OTA update/evolution debug
+// The Battle Idle state's two sub-views -- see battleShowingActions' own
+// comment above for the split. Read pet/battleStats/friendsList directly
+// (all already extern above) rather than taking them as parameters, same
+// as drawRivalsPage()/drawFriendsPage() do -- unlike drawBattlingLayout()
+// these don't need any live FamiliarBattleService state, only what's
+// already reachable this way, so there's nothing to parameterize.
+void drawBattleStatsView();
+void drawRivalsIcon(int16_t cx, int16_t cy, uint16_t color);
+void drawFriendsIcon(int16_t cx, int16_t cy, uint16_t color);
+enum BattleGridTile : uint8_t { GRID_HOST, GRID_FIND, GRID_RIVALS, GRID_FRIENDS };
+void drawBattleActionTile(BattleGridTile tile, int16_t x, int16_t y, const char *label,
+                          const char *value);
+void drawBattleActionsView();
+
+// A full-screen overlay (tapped open from the Battle Idle action grid's
+// RIVALS tile, dismissed by tapping anywhere -- see main.cpp), not one of
+// the 5 swipeable pages, same as the Player ID/OTA update/evolution debug
 // overlays already are.
 void drawRivalsPage();
 

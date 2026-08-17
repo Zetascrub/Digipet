@@ -115,6 +115,7 @@ const char *kPageNames =
     "companion|status|status-actions[2]|egg|settings|settings2|"
     "settings-brightness|settings-idle|settings-volume|settings-wake|"
     "settings-theme|settings-boot|genomelab|"
+    "battle-idle-stats|battle-idle-actions|"
     "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
     "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
     "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]|"
@@ -258,18 +259,24 @@ int main(int argc, char **argv) {
     const char *scenario = page + 7;
     const PetGenome opponentGenome = opponentTestGenome();
 
+    const bool isIdleView = strcmp(scenario, "idle-stats") == 0 ||
+                            strcmp(scenario, "idle-actions") == 0;
     const bool isFightOrResult =
         strncmp(scenario, "fight", 5) == 0 || strncmp(scenario, "result", 6) == 0;
-    if (isFightOrResult) {
-      // drawBattlingLayout is a sub-component (see its own comment) -- the
-      // real drawBattlePage() always wraps it in the backdrop/title/page-dots
+    if (isFightOrResult || isIdleView) {
+      // drawBattlingLayout/drawBattleStatsView/drawBattleActionsView are
+      // sub-components (see each one's own comment) -- the real
+      // drawBattlePage() always wraps them in the backdrop/title/page-dots
       // every other page gets. drawBattleResultsPage (the picker), below,
       // already does this itself.
       paintPageBackdrop();
-      drawCentered("LINK BATTLE", 16, 3, COLOR_MINT);
+      drawCentered("PVP", 16, 3, COLOR_MINT);
     }
-
-    if (strcmp(scenario, "fight") == 0 || strcmp(scenario, "fight-highstats") == 0 ||
+    if (strcmp(scenario, "idle-stats") == 0) {
+      drawBattleStatsView();
+    } else if (strcmp(scenario, "idle-actions") == 0) {
+      drawBattleActionsView();
+    } else if (strcmp(scenario, "fight") == 0 || strcmp(scenario, "fight-highstats") == 0 ||
         strcmp(scenario, "fight-lowhp") == 0 || strcmp(scenario, "fight-submitted") == 0 ||
         strcmp(scenario, "fight-fleearmed") == 0 || strcmp(scenario, "fight-nogenome") == 0) {
       uint16_t myHp = 24, myMaxHp = 40, oppHp = 31, oppMaxHp = 40;
@@ -317,7 +324,7 @@ int main(int argc, char **argv) {
       fprintf(stderr, "unknown battle scenario '%s'\n", scenario);
       return 1;
     }
-    if (isFightOrResult) drawPageDots(PAGE_BATTLE);
+    if (isFightOrResult || isIdleView) drawPageDots(PAGE_BATTLE);
   } else if (strcmp(page, "rivals-empty") == 0) {
     battleStats = BattleStats{};
     drawRivalsPage();

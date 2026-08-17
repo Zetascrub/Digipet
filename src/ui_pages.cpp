@@ -1,5 +1,14 @@
 #include "ui_pages.h"
 
+// The battle-stat formulas are declared here (not FamiliarBattleService's
+// own header) precisely so drawBattleStatsView() can call the pure
+// deriveMaxHp/Attack/Defense math without pulling in the rest of
+// FamiliarBattleService -- that class's .cpp brings in NimBLE, which this
+// file (and tools/sim's render harness that links it) has no business
+// depending on. familiar_battle_rules.cpp is the same NimBLE-free file the
+// native test suite already links for exactly this reason.
+#include "familiar_battle_rules.h"
+
 uint16_t scaleRgb565(uint16_t color, uint8_t percent) {
   const uint16_t red = min<uint16_t>(31, ((color >> 11) & 0x1F) * percent / 100);
   const uint16_t green = min<uint16_t>(63, ((color >> 5) & 0x3F) * percent / 100);
@@ -1348,6 +1357,113 @@ void drawBattlingLayout(uint16_t myHp, uint16_t myMaxHp, uint16_t opponentHp,
   } else {
     drawCentered("TAP TO RETURN", 330, 2, COLOR_CYAN);
   }
+}
+
+// The battle-stats sheet -- see battleShowingActions' own comment in
+// ui_pages.h. LEVEL/HP/ATTACK/DEFENSE/SPECIAL/TYPE all at once, replacing
+// the single cramped "LV 5 HP.. ATK.. DEF.." header line the old one-
+// screen Idle state used to draw.
+void drawBattleStatsView() {
+  drawCentered("BATTLE STATS", 51, 1, COLOR_CYAN);
+
+  drawPanelGlow(22, 76, 324, 260, 26, COLOR_CYAN);
+  display->fillRoundRect(22, 76, 324, 260, 26, COLOR_CARD);
+
+  // Mirrors main.cpp's battleCapabilities() special-value formula -- the
+  // actual value sent into a real battle. Unlike HP/ATK/DEF just below,
+  // there's no shared free function for this one to call instead
+  // (battleCapabilities() computes it inline), so this one small pure
+  // formula really is duplicated -- same reasoning the FNV-1a hash
+  // main.cpp/familiar_battle_service.cpp each carry their own copy of.
+  const uint8_t special = constrain(25 + pet.genome.faceGene + pet.stage * 9 +
+                                    pet.training / 4 + pet.bonusSpecial, 1, 100);
+
+  char hp[6], atk[5], def[5], specialText[5];
+  snprintf(hp, sizeof(hp), "%u", battleRulesDeriveMaxHp(5) + pet.bonusHp);
+  snprintf(atk, sizeof(atk), "%u", battleRulesDeriveAttack(5, pet.stage) + pet.bonusAttack);
+  snprintf(def, sizeof(def), "%u", battleRulesDeriveDefense(5, pet.stage) + pet.bonusDefense);
+  snprintf(specialText, sizeof(specialText), "%u", special);
+
+  const char *labels[] = {"LEVEL", "HP", "ATTACK", "DEFENSE", "SPECIAL", "TYPE"};
+  const char *values[] = {"5", hp, atk, def, specialText, elementName(pet.genome.element)};
+  constexpr int16_t kFirstRowY = 96;
+  constexpr int16_t kRowPitch = 36;
+  for (uint8_t i = 0; i < 6; ++i) {
+    const int16_t y = kFirstRowY + i * kRowPitch;
+    display->setTextSize(1);
+    display->setTextColor(COLOR_MUTED);
+    display->setCursor(46, y);
+    display->print(labels[i]);
+    drawCenteredInRect(values[i], 190, y - 7, 136, 22, 2, COLOR_TEXT);
+  }
+
+  char recordLine[32];
+  snprintf(recordLine, sizeof(recordLine), "RECORD %luW - %luL",
+           (unsigned long)battleStats.wins, (unsigned long)battleStats.losses);
+  drawCentered(recordLine, 312, 1, COLOR_MUTED);
+
+  drawCentered("SWIPE UP FOR BATTLE ACTIONS", 356, 1, COLOR_MUTED);
+}
+
+// Three ascending bars (a podium/leaderboard look, echoing
+// drawOpponentRow's own RSSI-bar shape) for the RIVALS action tile.
+void drawRivalsIcon(int16_t cx, int16_t cy, uint16_t color) {
+  display->fillRect(cx - 18, cy + 4, 10, 14, color);
+  display->fillRect(cx - 5, cy - 6, 10, 24, color);
+  display->fillRect(cx + 8, cy, 10, 18, color);
+}
+
+// Two overlapping circles -- a conventional "people" glyph -- for the
+// FRIENDS action tile.
+void drawFriendsIcon(int16_t cx, int16_t cy, uint16_t color) {
+  display->drawCircle(cx - 8, cy, 14, color);
+  display->drawCircle(cx + 8, cy, 14, color);
+}
+
+// Same chrome as drawActionTile() (Status page's own action grid) --
+// deliberately a separate function rather than a shared one: this grid's
+// icon set (battle-move glyphs, RIVALS' bars, FRIENDS' circles) doesn't
+// fit drawActionTile()'s existing action-index-to-icon mapping, and
+// growing that one to cover both would mean overloading the same index
+// space with two unrelated meanings depending on which page called it.
+void drawBattleActionTile(BattleGridTile tile, int16_t x, int16_t y, const char *label,
+                          const char *value) {
+  const uint16_t accent = (tile == GRID_HOST || tile == GRID_RIVALS) ? COLOR_PURPLE : COLOR_CYAN;
+  drawPanelGlow(x, y, 160, 137, 20, accent);
+  display->fillRoundRect(x, y, 160, 137, 20, COLOR_CARD);
+  display->drawRoundRect(x, y, 160, 137, 20, accent);
+  switch (tile) {
+    case GRID_HOST: drawBattleMoveIcon(ICON_DEFEND, x + 64, y + 18, COLOR_MINT); break;
+    case GRID_FIND: drawBattleMoveIcon(ICON_SPECIAL, x + 64, y + 18, COLOR_MINT); break;
+    case GRID_RIVALS: drawRivalsIcon(x + 80, y + 43, COLOR_MINT); break;
+    case GRID_FRIENDS: drawFriendsIcon(x + 80, y + 43, COLOR_MINT); break;
+  }
+  display->setTextSize(1);
+  display->setTextColor(COLOR_TEXT);
+  display->setCursor(x + 16, y + 82);
+  display->print(label);
+  display->setTextColor(COLOR_MUTED);
+  display->setCursor(x + 16, y + 104);
+  display->print(value);
+}
+
+// The HOST/FIND/RIVALS/FRIENDS action grid -- see battleShowingActions'
+// own comment in ui_pages.h. Hit-test regions (main.cpp's
+// handleBattleGridTap()) key off this exact 18/190,78/227 pair of rects,
+// same relationship the Status action grid's tiles have with
+// handleStatusGridTap().
+void drawBattleActionsView() {
+  drawCentered("SELECT AN ACTION // SWIPE DOWN", 51, 1, COLOR_CYAN);
+
+  drawBattleActionTile(GRID_HOST, 18, 78, "HOST", "OPEN SIGNAL");
+  drawBattleActionTile(GRID_FIND, 190, 78, "FIND", "SCAN FOR HOSTS");
+  char recordValue[16];
+  snprintf(recordValue, sizeof(recordValue), "%luW-%luL", (unsigned long)battleStats.wins,
+           (unsigned long)battleStats.losses);
+  drawBattleActionTile(GRID_RIVALS, 18, 227, "RIVALS", recordValue);
+  char friendsValue[16];
+  snprintf(friendsValue, sizeof(friendsValue), "%u ADDED", friendsList.count);
+  drawBattleActionTile(GRID_FRIENDS, 190, 227, "FRIENDS", friendsValue);
 }
 
 

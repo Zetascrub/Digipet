@@ -29,6 +29,7 @@ g++ -std=c++17 -O1 \
   src/ui_pages.cpp \
   src/pet_genome.cpp \
   src/color_utils.cpp \
+  src/familiar_battle_rules.cpp \
   lib/GFX_Library_for_Arduino/src/Arduino_G.cpp \
   lib/GFX_Library_for_Arduino/src/Arduino_GFX.cpp \
   lib/GFX_Library_for_Arduino/src/canvas/Arduino_Canvas.cpp \
