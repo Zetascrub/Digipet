@@ -1404,3 +1404,38 @@ void drawReconLogPage() {
 
   drawCentered("TAP TO RETURN", 396, 2, COLOR_CYAN);
 }
+
+// A full-screen overlay, opened from a tappable line on the Battle Idle
+// screen -- see this function's own prototype comment in ui_pages.h for
+// why it's not purely a passive list like Rivals/Recon Log. HOST/FIND
+// button hit-test regions (main.cpp) key off this exact 18/190,378 pair of
+// rects, same relationship drawBattlePage()'s own comment on its Idle
+// state's HOST/FIND rects has with handleBattleTap().
+void drawFriendsPage() {
+  paintPageBackdrop();
+  drawCentered("FRIENDS", 18, 3, COLOR_MINT);
+  drawCentered("ADDED VIA EXCHANGE ID", 51, 1, COLOR_CYAN);
+
+  drawPanelGlow(20, 70, 328, 296, 26, COLOR_PURPLE);
+  display->fillRoundRect(20, 70, 328, 296, 26, COLOR_CARD);
+  display->drawRoundRect(27, 77, 314, 282, 21, COLOR_PURPLE);
+
+  if (friendsList.count == 0) {
+    drawCentered("NO FRIENDS YET", 205, 2, COLOR_TEXT);
+    drawCentered("HOST OR FIND BELOW TO EXCHANGE", 234, 1, COLOR_MUTED);
+  } else {
+    constexpr int16_t kFirstRowY = 92;
+    constexpr int16_t kRowPitch = 35;
+    for (uint8_t i = 0; i < friendsList.count; ++i) {
+      const FriendEntry &friendEntry = friendsList.friends[i];
+      const int16_t y = kFirstRowY + i * kRowPitch;
+      display->setTextSize(2);
+      display->setTextColor(COLOR_TEXT);
+      display->setCursor(46, y);
+      display->printf("%08lX", (unsigned long)friendEntry.playerId);
+    }
+  }
+
+  drawBattleButton(18, 378, 154, 54, 16, COLOR_PURPLE, ICON_DEFEND, "HOST");
+  drawBattleButton(190, 378, 154, 54, 16, COLOR_CYAN, ICON_SPECIAL, "FIND");
+}

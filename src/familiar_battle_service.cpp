@@ -148,10 +148,12 @@ void FamiliarBattleService::resetForNewBattle() {
 
 bool FamiliarBattleService::beginHost(
     uint32_t playerId, uint8_t stageIndex, uint8_t level,
-    const FamiliarBattleCapabilities& capabilities, const char* genomeCode) {
+    const FamiliarBattleCapabilities& capabilities, const char* genomeCode,
+    FamiliarBattleMode mode) {
     end();
     resetForNewBattle();
     isHost_ = true;
+    myMode_ = mode;
     myPlayerId_ = playerId;
     myStageIndex_ = stageIndex;
     myLevel_ = level;
@@ -284,10 +286,12 @@ void FamiliarBattleService::parseAdvertisement(
 
 bool FamiliarBattleService::beginFind(
     uint32_t playerId, uint8_t stageIndex, uint8_t level,
-    const FamiliarBattleCapabilities& capabilities, const char* genomeCode) {
+    const FamiliarBattleCapabilities& capabilities, const char* genomeCode,
+    FamiliarBattleMode mode) {
     end();
     resetForNewBattle();
     isHost_ = false;
+    myMode_ = mode;
     myPlayerId_ = playerId;
     myStageIndex_ = stageIndex;
     myLevel_ = level;
@@ -598,11 +602,23 @@ void FamiliarBattleService::handleIncomingMessage(const uint8_t* data,
                 sendHello();
             }
             if (helloSent_ && helloReceived_ &&
-                state_ != FamiliarBattleState::Battling) {
-                state_ = FamiliarBattleState::Battling;
-                status_ = "Battle!";
-                turnNumber_ = 1;
-                addLog("Lv " + String(peerLevel) + " Familiar appeared!");
+                state_ != FamiliarBattleState::Battling &&
+                state_ != FamiliarBattleState::Exchanged) {
+                // Same handshake either way -- myMode_ (set by whichever of
+                // beginHost()/beginFind() started this connection) decides
+                // what happens the instant both sides have it, not
+                // anything peer-negotiated. See FamiliarBattleMode's own
+                // comment for why this is a branch here rather than a
+                // second connection stack.
+                if (myMode_ == FamiliarBattleMode::FriendExchange) {
+                    state_ = FamiliarBattleState::Exchanged;
+                    status_ = "Friend added!";
+                } else {
+                    state_ = FamiliarBattleState::Battling;
+                    status_ = "Battle!";
+                    turnNumber_ = 1;
+                    addLog("Lv " + String(peerLevel) + " Familiar appeared!");
+                }
             }
             break;
         }

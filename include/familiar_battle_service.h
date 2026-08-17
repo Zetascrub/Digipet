@@ -16,6 +16,24 @@ enum class FamiliarBattleState : uint8_t {
     Connecting,  // Find Opponent: connected, waiting on the HELLO handshake
     Battling,
     Result,
+    // The HELLO handshake completed the same way it does for a battle
+    // (opponent().playerId is populated identically), but myMode_ was
+    // FriendExchange, not Battle -- see that enum's own comment. No combat
+    // ever starts; this is the terminal state instead of Battling.
+    Exchanged,
+};
+
+// Both modes share the exact same beginHost()/beginFind()/HELLO-handshake
+// machinery (advertising, GATT server/client roles, the connection
+// handling) -- only what happens the instant both sides' HELLO lands
+// differs (see handleIncomingMessage()'s kMsgHello case): Battle proceeds
+// into combat, FriendExchange concludes immediately at Exchanged. Reusing
+// this already-hardware-proven connection code rather than standing up a
+// second, separate GATT service for exchanging one playerId is the whole
+// reason this is a mode flag and not a second class.
+enum class FamiliarBattleMode : uint8_t {
+    Battle,
+    FriendExchange,
 };
 
 enum class FamiliarBattleMove : uint8_t {
@@ -90,16 +108,19 @@ public:
 
     // `playerId` should be stable across boots -- main.cpp derives it from
     // ESP.getEfuseMac(), the same source already used for other per-device
-    // IDs in this app.
+    // IDs in this app. `mode` defaults to Battle so every existing call
+    // site is unaffected; main.cpp's Friends feature passes FriendExchange.
     bool beginHost(uint32_t playerId, uint8_t stageIndex, uint8_t level,
                    const FamiliarBattleCapabilities& capabilities = {},
-                   const char* genomeCode = nullptr);
+                   const char* genomeCode = nullptr,
+                   FamiliarBattleMode mode = FamiliarBattleMode::Battle);
     // Bounded, blocking scan (same shape as ble_scanner.cpp's scan() /
     // chameleon_ultra_client.cpp's connect()) -- populates scanResults().
     // Call again to rescan.
     bool beginFind(uint32_t playerId, uint8_t stageIndex, uint8_t level,
                    const FamiliarBattleCapabilities& capabilities = {},
-                   const char* genomeCode = nullptr);
+                   const char* genomeCode = nullptr,
+                   FamiliarBattleMode mode = FamiliarBattleMode::Battle);
     const std::vector<FamiliarBattleOpponent>& scanResults() const {
         return scanResults_;
     }
@@ -173,6 +194,7 @@ private:
     bool isHost_ = false;
     bool initialized_ = false;
 
+    FamiliarBattleMode myMode_ = FamiliarBattleMode::Battle;
     uint32_t myPlayerId_ = 0;
     uint8_t myStageIndex_ = 0;
     uint8_t myLevel_ = 0;

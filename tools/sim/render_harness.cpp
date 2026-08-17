@@ -56,6 +56,7 @@ SettingsView settingsView = SETTINGS_HOME;
 
 BattleStats battleStats{};
 ReconLog reconLog{};
+FriendsList friendsList{};
 bool statusShowingActions = false;
 
 bool hasCopiedGenome = false;
@@ -114,7 +115,8 @@ const char *kPageNames =
     "settings-theme|settings-boot|genomelab|"
     "battle-fight[-highstats|-lowhp|-submitted|-fleearmed|-nogenome]|"
     "battle-result[-copied|-nogenome]|battle-pickerN (N=result count, "
-    "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]";
+    "[stage] arg becomes the results page)|rivals[-empty]|recon[-empty]|"
+    "friends[-empty]";
 
 void seedTestSettings() {
   settings = DeviceSettings{};
@@ -343,6 +345,19 @@ int main(int argc, char **argv) {
       strncpy(entry.label, labels[i], sizeof(entry.label) - 1);
     }
     drawReconLogPage();
+  } else if (strcmp(page, "friends-empty") == 0) {
+    friendsList = FriendsList{};
+    drawFriendsPage();
+  } else if (strcmp(page, "friends") == 0) {
+    friendsList = FriendsList{};
+    const uint32_t ids[] = {0x7B6CCCu, 0xA1B2C3D4u, 0x00001234u, 0xDEADBEEFu,
+                            0x00FFAAu, 0x5A5A5A5Au, 0x1u, 0xFFFFFFFFu};
+    const int count = argc > 3 ? atoi(argv[3]) : kMaxFriends;
+    friendsList.count = static_cast<uint8_t>(std::min(count, static_cast<int>(kMaxFriends)));
+    for (uint8_t i = 0; i < friendsList.count; ++i) {
+      friendsList.friends[i] = {ids[i], static_cast<uint32_t>(i * 60)};
+    }
+    drawFriendsPage();
   } else {
     fprintf(stderr, "unknown page '%s' (want %s)\n", page, kPageNames);
     return 1;

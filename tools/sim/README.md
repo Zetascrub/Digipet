@@ -29,6 +29,11 @@ tools/sim/render.sh battle-picker3 /tmp/picker.png                #  -nogenome
 tools/sim/render.sh battle-picker7 /tmp/picker7-p2.png 1   # [stage] arg = results page
 tools/sim/render.sh rivals /tmp/rivals.png 3          # [stage] arg = rival count (max 8)
 tools/sim/render.sh rivals-empty /tmp/rivals-empty.png
+tools/sim/render.sh status-actions /tmp/actions.png   # Status page's FEED/PLAY/TRAIN/RECON grid
+tools/sim/render.sh recon /tmp/recon.png 5            # [stage] arg = signal count (max 8)
+tools/sim/render.sh recon-empty /tmp/recon-empty.png
+tools/sim/render.sh friends /tmp/friends.png 5        # [stage] arg = friend count (max 8)
+tools/sim/render.sh friends-empty /tmp/friends-empty.png
 
 # Any of the above also takes a 4th [theme] arg -- cyber-mint|amber-core|
 # violet-link|mono-signal, or a kThemes[] index 1-4 (see include/ui_pages.h)

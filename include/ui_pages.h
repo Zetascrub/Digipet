@@ -138,6 +138,27 @@ struct ReconLog {
 };
 extern ReconLog reconLog;
 
+// Same per-device-record reasoning as BattleStats/ReconLog above. Added via
+// a live BLE "Exchange ID" handshake (FamiliarBattleMode::FriendExchange,
+// familiar_battle_service.h) rather than a battle outcome -- see main.cpp's
+// addFriend(), called on the Idle-state edge into
+// FamiliarBattleState::Exchanged the same way recordBattleOutcome() is
+// called on the edge into Result.
+constexpr uint8_t kMaxFriends = 8;
+
+struct FriendEntry {
+  uint32_t playerId = 0;
+  uint32_t addedAge = 0;  // pet.ageMinutes when this friend was added.
+};
+
+struct FriendsList {
+  uint32_t magic = 0;
+  uint8_t count = 0;
+  uint8_t reserved[3]{};
+  FriendEntry friends[kMaxFriends]{};
+};
+extern FriendsList friendsList;
+
 struct DeviceSettings {
   uint32_t magic;
   uint8_t brightnessIndex;
@@ -304,6 +325,15 @@ void drawRivalsPage();
 // and main.cpp's performFeedScan()). Reads reconLog directly, same
 // relationship drawRivalsPage() has with battleStats.
 void drawReconLogPage();
+
+// Also a full-screen overlay, opened from a tappable line on the Battle
+// Idle screen (see main.cpp). Reads friendsList directly, same
+// relationship drawRivalsPage() has with battleStats -- but unlike Rivals/
+// Recon Log, this one isn't purely a passive list: it also draws its own
+// HOST/FIND buttons (main.cpp wires their taps to
+// FamiliarBattleMode::FriendExchange) so starting an exchange doesn't
+// require leaving the page you're looking at the list from.
+void drawFriendsPage();
 
 // --- Settings ------------------------------------------------------------------
 

@@ -164,6 +164,12 @@ constexpr uint32_t RECON_LOG_MAGIC = 0x52434C31;  // "RCL" + schema 1
 ReconLog reconLog{};
 bool showingReconLog = false;
 
+// Same reasoning as BATTLE_STATS_MAGIC/battleStats above.
+constexpr uint32_t FRIENDS_LIST_MAGIC = 0x46524E31;  // "FRN" + schema 1
+
+FriendsList friendsList{};
+bool showingFriends = false;
+
 // See this flag's own comment in ui_pages.h.
 bool statusShowingActions = false;
 
@@ -870,6 +876,39 @@ bool reconLogRecord(uint32_t idHash, uint8_t kind, const char *label) {
   return true;
 }
 
+void saveFriendsList() {
+  preferences.putBytes("friends", &friendsList, sizeof(friendsList));
+}
+
+void loadFriendsList() {
+  if (preferences.getBytesLength("friends") == sizeof(friendsList)) {
+    preferences.getBytes("friends", &friendsList, sizeof(friendsList));
+  }
+  if (friendsList.magic != FRIENDS_LIST_MAGIC) {
+    friendsList = FriendsList{};
+    friendsList.magic = FRIENDS_LIST_MAGIC;
+  }
+}
+
+// Called on the Idle-state edge into FamiliarBattleState::Exchanged (see
+// loop()'s battle-state-change handling, mirroring recordBattleOutcome()'s
+// own edge-into-Result call). No-op if already a friend or the list is
+// full -- unlike findOrAddRival(), a full list just stops accepting new
+// friends rather than evicting an old one: a rival's slot can meaningfully
+// go stale (you stopped battling them), but there's no equivalent
+// staleness signal for a friend, so evicting one silently on your behalf
+// would be a surprising thing for the app to decide alone.
+void addFriend(uint32_t playerId) {
+  for (uint8_t i = 0; i < friendsList.count; ++i) {
+    if (friendsList.friends[i].playerId == playerId) return;
+  }
+  if (friendsList.count >= kMaxFriends) return;
+  FriendEntry &entry = friendsList.friends[friendsList.count++];
+  entry.playerId = playerId;
+  entry.addedAge = pet.ageMinutes;
+  saveFriendsList();
+}
+
 // Finds `playerId`'s rival slot, adding a new one if this is a first-time
 // opponent. Once all kMaxBattleRivals slots are full, reuses whichever
 // rival has the fewest recorded battles -- a simple "keep the rivalries
@@ -1499,9 +1538,14 @@ void drawBattlePage() {
   drawCentered("LINK BATTLE", 16, 3, COLOR_MINT);
 
   const FamiliarBattleState state = battle.state();
-  const bool inBattle = state == FamiliarBattleState::Battling ||
-                        state == FamiliarBattleState::Result;
-  if (!inBattle) {
+  // These three states draw their own full panel (HP bars/move grid,
+  // battle-complete summary, or the exchange confirmation below) -- the
+  // own-stats header above it would be redundant clutter on top of any of
+  // them, not just the two battle ones.
+  const bool hasFullScreenPanel = state == FamiliarBattleState::Battling ||
+                                  state == FamiliarBattleState::Result ||
+                                  state == FamiliarBattleState::Exchanged;
+  if (!hasFullScreenPanel) {
     display->setTextSize(1);
     display->setTextColor(COLOR_CYAN);
     display->setCursor(24, 51);
@@ -1525,6 +1569,12 @@ void drawBattlePage() {
     drawBattleButton(199, 180, 126, 62, 16, COLOR_CYAN, ICON_SPECIAL, "FIND");
     drawCentered(battle.status().c_str(), 269, 1, COLOR_WARNING);
     drawCentered("HOST WAITS // FIND SCANS", 326, 1, COLOR_MUTED);
+    // The "FRIENDS N // TAP TO VIEW" line drawn here -- see
+    // include/ui_pages.h's own comment on drawFriendsPage(). Hit-test
+    // region (loop()'s touch-up handling) keys off this exact y=351 row.
+    char friendsLine[26];
+    snprintf(friendsLine, sizeof(friendsLine), "FRIENDS %u // TAP TO VIEW", friendsList.count);
+    drawCentered(friendsLine, 351, 1, COLOR_MUTED);
   } else if (state == FamiliarBattleState::Scanning) {
     // Effectively unreachable today (beginFind() blocks for its whole scan
     // window before returning, so the UI never renders mid-scan -- see the
@@ -1545,6 +1595,12 @@ void drawBattlePage() {
                  278, 2, COLOR_TEXT);
     drawCentered(battle.status().c_str(), 310, 1, COLOR_MUTED);
     drawCentered("TAP BELOW TO CANCEL", 367, 1, COLOR_WARNING);
+  } else if (state == FamiliarBattleState::Exchanged) {
+    const PetPalette palette = paletteForGenome(pet.genome);
+    drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 170, 70, palette.glow);
+    drawCentered("FRIEND ADDED", 260, 2, COLOR_MINT);
+    drawCentered(battle.status().c_str(), 296, 1, COLOR_MUTED);
+    drawCentered("TAP TO RETURN", 340, 1, COLOR_CYAN);
   } else {
     // The two most recent log lines ("you did this, they did that") rather
     // than one line under a big decorative VS panel.
@@ -2594,6 +2650,51 @@ void handleBattleTap(int16_t x, int16_t y) {
               state == FamiliarBattleState::Connecting) && y >= 340) {
     battle.end();
     presentBattlePage();
+  } else if (state == FamiliarBattleState::Exchanged) {
+    battle.end();
+    presentBattlePage();
+  }
+}
+
+// The Friends overlay's HOST/FIND buttons (see drawFriendsPage()'s own
+// prototype comment) -- hit-test regions key off that function's exact
+// 18/190,378 pair of rects. Any other tap closes the overlay, the same
+// "tap anywhere to return" Rivals/Recon Log already use.
+void handleFriendsTap(int16_t x, int16_t y) {
+  if (y >= 378 && y < 432) {
+    showingFriends = false;
+    const FamiliarBattleCapabilities capabilities = battleCapabilities();
+    if (x < LCD_WIDTH / 2) {
+      battle.beginHost(battlePlayerId(), pet.stage, 5, capabilities, nullptr,
+                       FamiliarBattleMode::FriendExchange);
+    } else {
+      // Same blocking-scan treatment as the Battle Idle screen's own FIND
+      // button (handleBattleTap) -- a static frame while beginFind() blocks
+      // for its whole scan window -- but auto-connects to the
+      // first/strongest signal instead of showing the battle picker: a
+      // friend exchange is a "we're both here right now" interaction, not
+      // a pick-an-opponent one, and drawBattleResultsPage's "SELECT
+      // OPPONENT"/level framing doesn't fit it.
+      Arduino_GFX *previousDisplay = display;
+      if (transitionsReady) display = &pageCanvasA;
+      paintPageBackdrop();
+      const PetPalette palette = paletteForGenome(pet.genome);
+      drawCreaturePortrait(pet.genome, max<uint8_t>(pet.stage, 1), 184, 170, 70,
+                           palette.glow);
+      drawCentered("SCANNING FOR FRIENDS", 260, 2, COLOR_CYAN);
+      drawCentered("4 SECOND SEARCH", 296, 1, COLOR_MUTED);
+      if (transitionsReady) {
+        display = previousDisplay;
+        panel->draw16bitRGBBitmap(0, 0, pageCanvasA.getFramebuffer(), LCD_WIDTH, LCD_HEIGHT);
+      }
+      battle.beginFind(battlePlayerId(), pet.stage, 5, capabilities, nullptr,
+                       FamiliarBattleMode::FriendExchange);
+      if (!battle.scanResults().empty()) battle.connectTo(0);
+    }
+    presentBattlePage();
+  } else {
+    showingFriends = false;
+    presentOverlayExit(drawFriendsPage, PAGE_BATTLE);
   }
 }
 
@@ -2609,6 +2710,7 @@ void setup() {
   loadCopiedGenome();
   loadBattleStats();
   loadReconLog();
+  loadFriendsList();
   applyTheme();
   char genomeSelfTest[PET_GENOME_CODE_LENGTH + 1]{};
   PetGenome decodedSelfTest{};
@@ -2699,6 +2801,12 @@ void loop() {
           lastBattleState != FamiliarBattleState::Result) {
         recordBattleOutcome(battle.outcome(), battle.opponent().playerId);
       }
+      // Same edge-detection shape, for FamiliarBattleMode::FriendExchange's
+      // own terminal state instead of a battle's.
+      if (battle.state() == FamiliarBattleState::Exchanged &&
+          lastBattleState != FamiliarBattleState::Exchanged) {
+        addFriend(battle.opponent().playerId);
+      }
       lastBattleState = battle.state();
       lastBattleTurn = battle.turnNumber();
       lastBattleMyHp = battle.myHp();
@@ -2742,6 +2850,7 @@ void loop() {
   } else if (!sleeping && toastVisible && !showingEvolutionDebug &&
              !showingGenomeProfile && !showingPlayerId && !showingUpdate &&
              !showingBattleResults && !showingRivals && !showingReconLog &&
+             !showingFriends &&
              (currentPage == PAGE_STATUS || currentPage == PAGE_BATTLE ||
               currentPage == PAGE_SETTINGS) &&
              now - lastAnimation >= 30) {
@@ -2868,6 +2977,11 @@ void loop() {
         touchStartX = touchStartY = touchLastX = touchLastY = -1;
         return;
       }
+      if (showingFriends) {
+        handleFriendsTap(touchLastX, touchLastY);
+        touchStartX = touchStartY = touchLastX = touchLastY = -1;
+        return;
+      }
       if (showingGenomeProfile) {
         if (touchLastY >= 338 && touchLastY < 393) {
           if (touchLastX < LCD_WIDTH / 2) exportActiveGenome();
@@ -2974,6 +3088,15 @@ void loop() {
         // state -- see include/ui_pages.h's own comment on drawRivalsPage().
         showingRivals = true;
         presentOverlayEntrance(PAGE_BATTLE, drawRivalsPage);
+      } else if (currentPage == PAGE_BATTLE && battle.state() == FamiliarBattleState::Idle &&
+                 touchLastX >= 80 && touchLastX <= 288 &&
+                 touchLastY >= 342 && touchLastY <= 364 &&
+                 abs(deltaX) < 20 && abs(deltaY) < 20) {
+        // The "FRIENDS N // TAP TO VIEW" line drawn in drawBattlePage()'s
+        // Idle state -- see include/ui_pages.h's own comment on
+        // drawFriendsPage().
+        showingFriends = true;
+        presentOverlayEntrance(PAGE_BATTLE, drawFriendsPage);
       } else if (currentPage == PAGE_BATTLE) {
         handleBattleTap(touchLastX, touchLastY);
       }
